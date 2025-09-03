@@ -1,1 +1,0 @@
-app.get("/metrics",(req,res)= v=path.join(__dirname,"valid_results.jsonl");const i=path.join(__dirname,"invalid_results.jsonl");const V=count(v),I=count(i);res.json({ok:true,files:{valid:V,invalid:I},totals:{received:V.total+I.total,valid:V.total,invalid:I.total}});}catch(e){res.status(500).json({ok:false,error:String(e
