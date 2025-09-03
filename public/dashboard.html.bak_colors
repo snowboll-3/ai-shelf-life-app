@@ -1,0 +1,141 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Shelf-Life – Dashboard</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 16px; }
+    .topbar { background:#111; color:#fff; padding:8px 12px; border-radius:10px; margin-bottom:12px; display:flex; gap:10px; align-items:center; }
+    .btn { padding:8px 12px; border-radius:8px; border:0; cursor:pointer; }
+    .btn.refresh{ background:#2563eb; color:#fff; }
+    table{ width:100%; border-collapse: collapse; }
+    th,td{ padding:8px; border-bottom:1px solid #e5e7eb; vertical-align:top; }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+    .g{ background:#e8f5e9; color:#1b5e20;}     /* green */
+    .y{ background:#fff8e1; color:#8a6d00;}     /* yellow */
+    .o{ background:#fff3e0; color:#e65100;}     /* orange */
+    .r{ background:#ffebee; color:#b71c1c;}     /* red */
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>✅ NOVI DASHBOARD V2 LOADED – boje & sortiranje po isteku</div>
+    <button id="btnRefresh" class="btn refresh">🔄 Osvježi</button>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th style="width:210px;">Time</th>
+        <th>Product</th>
+        <th>Shelf life</th>
+        <th>Status</th>
+        <th>Metadata</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"><tr><td colspan="5">Učitavam…</td></tr></tbody>
+  </table>
+
+<script>
+console.log("Dashboard V2 script start");
+
+function addDays(iso, days){
+  try{ const d=new Date(iso); if(!isFinite(d)) return null; d.setUTCDate(d.getUTCDate()+Number(days||0)); return d; }catch{ return null; }
+}
+function daysBetween(a,b){ return Math.ceil((b-a)/86400000); }
+function bucketDaysLeft(d){
+  if(d<=10) return "r";       // red
+  if(d<=30) return "o";       // orange
+  if(d<=90) return "y";       // yellow
+  return "g";                 // green
+}
+function bucketLabel(c){
+  return {r:"≤10 dana", o:"≤30 dana", y:"≤90 dana", g:">90 dana"}[c] || "";
+}
+
+async function fetchValid(limit=100){
+  const res = await fetch(`/logs/valid?limit=${limit}`);
+  const j = await res.json();
+  return j.items || [];
+}
+
+function renderRows(items){
+  const tb = document.getElementById("tbody");
+  if(!items.length){ tb.innerHTML = '<tr><td colspan="5">Nema zapisa.</td></tr>'; return; }
+
+  const now = new Date();
+
+  // obogati podatke: izračunaj days_left iz metadata.last_updated + shelf_life.unopened_days
+  const rows = items.map(x=>{
+    const data = x.data || {};
+    const sl = data.shelf_life || {};
+    const lu = (data.metadata && data.metadata.last_updated) || null;
+    const expiry = (lu ? addDays(lu, sl.unopened_days||0) : null);
+    const days_left = (expiry ? daysBetween(now, expiry) : null);
+    const color = (days_left==null ? "y" : bucketDaysLeft(days_left)); // default žuto ako ne znamo
+    return { x, days_left, color };
+  });
+
+  // sortiraj: prvo po najmanje dana_left (nepoznati na kraj), pa po vremenu
+  rows.sort((a,b)=>{
+    if(a.days_left==null && b.days_left==null) return (new Date(b.x.received_at) - new Date(a.x.received_at));
+    if(a.days_left==null) return 1;
+    if(b.days_left==null) return -1;
+    if(a.days_left!==b.days_left) return a.days_left - b.days_left;
+    return (new Date(b.x.received_at) - new Date(a.x.received_at));
+  });
+
+  tb.innerHTML = "";
+  for(const r of rows){
+    const d = r.x.data || {};
+    const p = d.product || {};
+    const sl = d.shelf_life || {};
+    const st = d.status || {};
+    const md = d.metadata || {};
+    const pill = `<span class="pill ${r.color}">${r.days_left==null ? "?" : (r.days_left+" d")} • ${bucketLabel(r.color)}</span>`;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="mono">${r.x.received_at}</td>
+      <td>
+        <div><strong>${p.name||"-"}</strong></div>
+        <div>Barcode: <span class="mono">${p.barcode||"-"}</span></div>
+        <div class="mono">${p.category||"-"}</div>
+      </td>
+      <td>
+        <div>unopened: ${sl.unopened_days??"-"} d</div>
+        <div>opened: ${sl.opened_days??"-"} d</div>
+        <div>temp: ${sl.storage_temp||"-"}</div>
+        <div>${pill}</div>
+      </td>
+      <td>
+        <div>confidence: ${st.confidence??"-"}</div>
+        <div>safe: ${String(st.safe_to_consume)}</div>
+        <div>codes: ${(st.reason_codes||[]).join(", ")}</div>
+      </td>
+      <td>
+        <div>updated: ${md.last_updated||"-"}</div>
+        <div>source: ${md.source||"-"}</div>
+      </td>
+    `;
+    tb.appendChild(tr);
+  }
+}
+
+async function load(){
+  try{
+    const items = await fetchValid(100);
+    renderRows(items);
+  }catch(e){
+    console.error(e);
+    document.getElementById("tbody").innerHTML = `<tr><td colspan="5">Greška pri učitavanju.</td></tr>`;
+  }
+}
+
+document.getElementById("btnRefresh").addEventListener("click", load);
+load();
+</script>
+</body>
+</html>

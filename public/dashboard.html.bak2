@@ -1,0 +1,121 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI Shelf-Life – Dashboard</title>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;margin:16px}
+  .row{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  table{width:100%;border-collapse:collapse}
+  th,td{border-bottom:1px solid #eee;padding:8px;vertical-align:top}
+  small{color:#666}
+  .muted{color:#666}
+</style>
+</head>
+<body>
+  <h1>AI Shelf-Life – Dashboard</h1>
+  <div class="row">
+    <label>Tip:
+      <select id="type">
+        <option value="valid" selected>valid</option>
+        <option value="invalid">invalid</option>
+      </select>
+    </label>
+    <label>Limit:
+      <select id="limit">
+        <option>10</option>
+        <option>25</option>
+        <option selected>50</option>
+        <option>100</option>
+        <option value="999">Sve</option>
+      </select>
+    </label>
+    <button id="refresh">Osvježi</button>
+    <a href="/scan.html">📷 Scan</a>
+  </div>
+
+  <div id="summary" class="muted"></div>
+  <table id="tbl">
+    <thead>
+      <tr><th>Time</th><th>Product</th><th>Shelf life</th><th>Status</th><th>Metadata</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const typeSel  = document.getElementById('type');
+const limitSel = document.getElementById('limit');
+const refresh  = document.getElementById('refresh');
+const summary  = document.getElementById('summary');
+const tbody    = document.querySelector('#tbl tbody');
+
+// preuzmi limit/type iz URL-a ako su zadani
+if (qs.get('limit')) {
+  const v = qs.get('limit');
+  [...limitSel.options].forEach(o => { if (o.value===v) o.selected = true; });
+}
+if (qs.get('type')) {
+  const v = qs.get('type');
+  [...typeSel.options].forEach(o => { if (o.value===v) o.selected = true; });
+}
+
+async function load() {
+  const type  = typeSel.value;
+  const limit = limitSel.value || '50';
+  const url = `/logs/${type}?page=1&limit=${encodeURIComponent(limit)}`;
+  const res = await fetch(url);
+  const json = await res.json();
+
+  summary.textContent = `Total: ${json.total} | Showing: ${json.items.length} | Pages: ${json.pages} (limit=${json.limit})`;
+
+  tbody.innerHTML = '';
+  if (type === 'valid') {
+    json.items.forEach(x => {
+      const d = x.data || {};
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><div>${x.received_at}</div></td>
+        <td>
+          <div>${d.product?.name || ''}</div>
+          <small>Barcode: ${d.product?.barcode || ''}</small><br/>
+          <small>${d.product?.category || ''}</small>
+        </td>
+        <td>
+          <div>unopened: ${d.shelf_life?.unopened_days ?? ''} d</div>
+          <div>opened: ${d.shelf_life?.opened_days ?? ''} d</div>
+          <div>temp: ${d.shelf_life?.storage_temp ?? ''}</div>
+        </td>
+        <td>
+          <div>confidence: ${d.status?.confidence ?? ''}</div>
+          <div>safe: ${d.status?.safe_to_consume ?? ''}</div>
+          <small>codes: ${(d.status?.reason_codes || []).join(', ')}</small>
+        </td>
+        <td>
+          <div>updated: ${d.metadata?.last_updated || ''}</div>
+          <small>source: ${d.metadata?.source || ''}</small>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+  } else {
+    json.items.forEach(x => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${x.received_at}</td>
+        <td colspan="4">
+          <div><strong>Error:</strong> ${x.error || ''}</div>
+          <pre style="white-space:pre-wrap;background:#fafafa;padding:8px;border-radius:8px;">${x.raw_preview || ''}</pre>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+refresh.addEventListener('click', load);
+typeSel.addEventListener('change', load);
+limitSel.addEventListener('change', load);
+load();
+</script>
+</body>
+</html>

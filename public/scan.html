@@ -1,19 +1,64 @@
 ﻿<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>AI Shelf-Life - Barcode Scan</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Shelf-Life – Scan</title>
   <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 16px; }
+    #reader { width: 320px; max-width: 100%; margin-bottom: 12px; }
+    .status { padding: 8px 12px; border-radius: 8px; background:#f3f4f6; }
+    button { padding: 10px 14px; border-radius: 10px; border: 0; cursor: pointer; }
+  </style>
 </head>
 <body>
   <h1>📷 Scan Barcode</h1>
-  <div id="reader" style="width:300px;"></div>
-  <p id="result">Waiting for scan...</p>
+  <div id="reader"></div>
+  <p id="result" class="status">Waiting for scan...</p>
+  <button id="openDashboard" onclick="window.location.href='/dashboard'">➡️ Otvori Dashboard</button>
 
   <script>
-    function onScanSuccess(decodedText) {
-      document.getElementById("result").innerText = "Scanned: " + decodedText;
+    // helper: Pošalji na backend kao validan JSON (šema v2)
+    async function sendToBackend(barcode) {
+      const payload = {
+        product: { name: "Scanned item", barcode: String(barcode), category: "unknown" },
+        shelf_life: { unopened_days: 0, opened_days: 0, storage_temp: "ambient", adjustment_factor: 1 },
+        status: { confidence: 1, reason_codes: ["SKU_fuzzy_match"], safe_to_consume: true },
+        metadata: { last_updated: new Date().toISOString(), source: "scanner" }
+      };
+
+      try {
+        const res = await fetch("/llm-result", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        return await res.json();
+      } catch (e) {
+        return { ok:false, error:String(e) };
+      }
     }
+
+    function onScanSuccess(decodedText) {
+      const resultEl = document.getElementById("result");
+      resultEl.textContent = "Scanned: " + decodedText + " … šaljem na server…";
+
+      // Zaključaj čitač na kratko da ne šalje dvaput
+      html5QrCode.stop().then(async () => {
+        const out = await sendToBackend(decodedText);
+        if (out && out.ok) {
+          resultEl.textContent = "✅ Spremljeno! → " + (out.data?.product?.name || "Item");
+          // Opcionalno: nakon 1.5s otvori dashboard
+          setTimeout(() => window.location.href = "/dashboard", 1500);
+        } else {
+          resultEl.textContent = "❌ Greška: " + (out?.error || "Nepoznata greška");
+          // Ponovno pokreni kameru za novi pokušaj
+          html5QrCode.start({facingMode:"environment"}, {fps:10, qrbox:250}, onScanSuccess);
+        }
+      });
+    }
+
     const html5QrCode = new Html5Qrcode("reader");
     html5QrCode.start(
       { facingMode: "environment" },

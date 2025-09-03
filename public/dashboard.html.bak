@@ -1,0 +1,180 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Shelf-Life – Dashboard</title>
+  <style>
+    :root{
+      --red:#fee2e2; --orange:#ffedd5; --yellow:#fef9c3; --green:#dcfce7;
+      --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+    }
+    body{font-family: system-ui, Arial, sans-serif; margin:16px; color:var(--fg);}
+    h1{margin:0 0 8px 0}
+    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px}
+    .pill{padding:6px 10px; border-radius:999px; background:#f3f4f6; font-size:14px}
+    button{padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:white; cursor:pointer}
+    button:hover{background:#f9fafb}
+    table{width:100%; border-collapse:collapse; margin-top:12px; font-size:14px}
+    thead th{position:sticky; top:0; background:white; z-index:1; border-bottom:1px solid var(--line); text-align:left; padding:10px}
+    tbody td{border-bottom:1px solid var(--line); padding:10px; vertical-align:top}
+    tr.red    td{background:var(--red)   !important;}
+    tr.orange td{background:var(--orange)!important;}
+    tr.yellow td{background:var(--yellow)!important;}
+    tr.green  td{background:var(--green) !important;}
+    .muted{color:var(--muted)}
+    .codes{opacity:.9; font-size:12px}
+    .nowrap{white-space:nowrap}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+    .legend{display:flex; gap:8px; align-items:center}
+    .sw{width:14px; height:14px; border-radius:3px; display:inline-block; border:1px solid var(--line)}
+  </style>
+</head>
+<body>
+  <h1>AI Shelf-Life – Dashboard</h1>
+  <div class="row">
+    <div class="pill">Total: <span id="total">–</span></div>
+    <div class="pill">Valid: <span id="valid">–</span></div>
+    <div class="pill">Invalid: <span id="invalid">–</span></div>
+    <div class="pill legend">
+      <span class="sw" style="background:#fee2e2"></span> ≤10d
+      <span class="sw" style="background:#ffedd5"></span> ≤30d
+      <span class="sw" style="background:#fef9c3"></span> ≤75d
+      <span class="sw" style="background:#dcfce7"></span> >75d
+    </div>
+    <label>Limit: <input id="limit" class="mono" type="number" min="1" value="100" style="width:80px"></label>
+    <button id="refresh">Osvježi</button>
+    <button onclick="location.href='/scan.html'">📷 Scan</button>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th class="nowrap">Time</th>
+        <th>Product</th>
+        <th class="nowrap">Shelf life</th>
+        <th>Status</th>
+        <th>Metadata</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+const $ = sel => document.querySelector(sel);
+
+function classify(daysLeft){
+  if (daysLeft <= 10) return {name:"red",    color:"#fee2e2"};
+  if (daysLeft <= 30) return {name:"orange", color:"#ffedd5"};
+  if (daysLeft <= 75) return {name:"yellow", color:"#fef9c3"};
+  return {name:"green", color:"#dcfce7"};
+}
+
+// TEMP: dok ne uvedemo stvarni datum isteka,
+// days_left = unopened_days
+function computeDaysLeft(item){
+  const sl = item?.data?.shelf_life || {};
+  return Number(sl.unopened_days ?? 0);
+}
+
+function esc(x){ return String(x == null ? "" : x); }
+
+async function fetchJson(url){
+  const r = await fetch(url, {cache:"no-store"});
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+async function loadCounts(){
+  const v = await fetchJson(`/logs/valid?limit=1`);
+  const i = await fetchJson(`/logs/invalid?limit=1`);
+  $("#valid").textContent = v.total ?? "0";
+  $("#invalid").textContent = i.total ?? "0";
+  $("#total").textContent = (Number(v.total||0)+Number(i.total||0)).toString();
+}
+
+function paintRow(tr, colorHex){
+  // sigurnosni “inline” fallback – boji svako <td>
+  for (const td of tr.children) td.style.backgroundColor = colorHex;
+}
+
+async function loadTable(){
+  const limit = Number($("#limit").value || 100);
+  const data = await fetchJson(`/logs/valid?limit=${limit}`);
+  const items = (data.items || []).map(it => {
+    const daysLeft = computeDaysLeft(it);
+    return {it, daysLeft};
+  });
+
+  // SORT: najkritičniji na vrhu
+  items.sort((a,b) => a.daysLeft - b.daysLeft);
+
+  const tbody = $("#tbl tbody");
+  tbody.innerHTML = "";
+
+  for (const row of items){
+    const it = row.it;
+    const p = it?.data?.product || {};
+    const sl = it?.data?.shelf_life || {};
+    const st = it?.data?.status || {};
+    const md = it?.data?.metadata || {};
+
+    const cls = classify(row.daysLeft);
+
+    const tr = document.createElement("tr");
+    tr.className = cls.name;
+
+    const tdTime = document.createElement("td");
+    tdTime.innerHTML = `<div class="mono">${esc(it.received_at)}</div>`;
+    tr.appendChild(tdTime);
+
+    const tdProd = document.createElement("td");
+    tdProd.innerHTML = `
+      <div><strong>${esc(p.name || "(no name)")}</strong></div>
+      <div class="mono">Barcode: ${esc(p.barcode||"")}</div>
+      <div class="muted">${esc(p.category||"")}</div>
+    `;
+    tr.appendChild(tdProd);
+
+    const tdShelf = document.createElement("td");
+    tdShelf.innerHTML = `
+      <div>unopened: <strong>${esc(sl.unopened_days)} d</strong></div>
+      <div>opened: <strong>${esc(sl.opened_days)} d</strong></div>
+      <div>temp: <strong>${esc(sl.storage_temp)}</strong></div>
+      <div class="mono muted">days_left: ${row.daysLeft}</div>
+    `;
+    tr.appendChild(tdShelf);
+
+    const tdStatus = document.createElement("td");
+    tdStatus.innerHTML = `
+      <div>confidence: <strong>${esc(st.confidence)}</strong></div>
+      <div>safe: <strong>${esc(st.safe_to_consume)}</strong></div>
+      <div class="codes">codes: ${esc((st.reason_codes||[]).join(", "))}</div>
+    `;
+    tr.appendChild(tdStatus);
+
+    const tdMeta = document.createElement("td");
+    tdMeta.innerHTML = `
+      <div>updated: <span class="mono">${esc(md.last_updated)}</span></div>
+      <div>source: <strong>${esc(md.source)}</strong></div>
+    `;
+    tr.appendChild(tdMeta);
+
+    // Inline bojanje (fallback da boja bude SIGURNO vidljiva)
+    paintRow(tr, cls.color);
+    tbody.appendChild(tr);
+  }
+}
+
+async function refreshAll(){
+  try{
+    await Promise.all([loadCounts(), loadTable()]);
+  }catch(e){ console.error(e); }
+}
+
+$("#refresh").addEventListener("click", refreshAll);
+refreshAll();
+setInterval(refreshAll, 10000);
+</script>
+</body>
+</html>
