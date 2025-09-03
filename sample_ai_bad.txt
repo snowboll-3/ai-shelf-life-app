@@ -1,0 +1,8 @@
+﻿Model kaže:
+{
+  "product": {"name":"Milk","barcode":"123","category":null},
+  "shelf_life":{"unopened_days":-1,"opened_days":2,"storage_temp":"fridge","adjustment_factor":1.2,"note":"x"},
+  "status":{"confidence":1.2,"reason_codes":["unknown_code"],"safe_to_consume":true},
+  "metadata":{"last_updated":"not-a-date","source":"LLM"},
+  "extra":"nope"
+}

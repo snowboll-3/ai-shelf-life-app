@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI Shelf-Life v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["product", "shelf_life", "status", "metadata"],
+  "properties": {
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "barcode", "category"],
+      "properties": {
+        "name": { "type": ["string", "null"], "minLength": 1 },
+        "barcode": { "type": ["string", "null"], "pattern": "^[0-9A-Za-z]{8,20}$" },
+        "category": { "type": ["string", "null"], "minLength": 2 }
+      }
+    },
+    "shelf_life": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unopened_days", "opened_days", "storage_temp", "adjustment_factor"],
+      "properties": {
+        "unopened_days": { "type": ["integer", "null"], "minimum": 0, "maximum": 3650 },
+        "opened_days":  { "type": ["integer", "null"], "minimum": 0, "maximum": 3650 },
+        "storage_temp": { "type": "string", "enum": ["cold", "room", "warm", "frozen", "unknown"] },
+        "adjustment_factor": { "type": ["number", "null"], "minimum": 0, "maximum": 3 }
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["confidence", "reason_codes", "safe_to_consume"],
+      "properties": {
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "SKU_exact_match", "SKU_fuzzy_match",
+              "OCR_low", "OCR_ok",
+              "temperature_high", "temperature_normal",
+              "opened", "unopened",
+              "from_db", "from_llm", "from_user"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "safe_to_consume": { "type": "boolean" }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["last_updated", "source"],
+      "properties": {
+        "last_updated": { "type": "string", "format": "date-time" },
+        "source": { "type": "string", "enum": ["LLM", "DB", "OCR", "user_input"] }
+      }
+    }
+  }
+}

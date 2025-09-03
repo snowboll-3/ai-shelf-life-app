@@ -1,0 +1,292 @@
+﻿const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const { parseAndValidateLLM } = require("./validateShelfLife");
+
+const app = express();
+app.use(express.text({ type: "*/*", limit: "1mb" }));
+
+// --- helpers ---
+const stripBom = (s) => s.replace(/^\uFEFF/, "");
+function countJsonl(filePath) {
+  if (!fs.existsSync(filePath)) return { exists: false, total: 0, size_bytes: 0 };
+  const raw = stripBom(fs.readFileSync(filePath, "utf8"));
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  const stat = fs.statSync(filePath);
+  return { exists: true, total: lines.length, size_bytes: stat.size };
+}
+function paginate(arr, page = 1, limit = 50) {
+  page = Math.max(1, parseInt(page || "1", 10));
+  limit = Math.max(1, Math.min(200, parseInt(limit || "50", 10)));
+  const total = arr.length;
+  const pages = total ? Math.ceil(total / limit) : 0;
+  const start = (page - 1) * limit;
+  const items = arr.slice(start, start + limit);
+  return { page, limit, total, pages, items };
+}
+function readJsonl(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  const raw = stripBom(fs.readFileSync(filePath, "utf8"));
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  return lines.map(l => { try { return JSON.parse(l); } catch { return { _corrupt: true, raw: l }; } });
+}
+function toCsv(rows) {
+  if (!rows.length) return "received_at,data\n";
+  const header = Object.keys(rows[0]);
+  const esc = v => `"${String(v ?? "").replace(/"/g,'""')}"`;
+  const lines = [header.join(",")];
+  for (const r of rows) lines.push(header.map(k => esc(r[k])).join(","));
+  return lines.join("\n");
+}
+
+// --- health ---
+app.get("/health", (req, res) => {
+  res.json({ ok: true, now: new Date().toISOString(), uptime_s: Math.round(process.uptime()) });
+});
+
+// --- version/info ---
+app.get("/version", (req, res) => {
+  const schemaPath = path.join(__dirname, "shelf_life_v2.schema.json");
+  const exists = fs.existsSync(schemaPath);
+  let modified_at = null, size_bytes = 0;
+  if (exists) {
+    const st = fs.statSync(schemaPath);
+    modified_at = st.mtime.toISOString();
+    size_bytes = st.size;
+  }
+  res.json({
+    ok: true,
+    app: { name: "ai-shelf-life-app", version: "1.0.0" },
+    runtime: { node: process.version, express: require("express/package.json").version, ajv: require("ajv/package.json").version },
+    schema: { file: "shelf_life_v2.schema.json", exists, modified_at, size_bytes }
+  });
+});
+
+// --- metrics ---
+app.get("/metrics", (req, res) => {
+  try {
+    const valid = countJsonl(path.join(__dirname, "valid_results.jsonl"));
+    const invalid = countJsonl(path.join(__dirname, "invalid_results.jsonl"));
+    res.json({
+      ok: true,
+      files: { valid, invalid },
+      totals: { received: valid.total + invalid.total, valid: valid.total, invalid: invalid.total }
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// --- main ingestion: /llm-result ---
+app.post("/llm-result", (req, res) => {
+  try {
+    const data = parseAndValidateLLM(req.body);
+    const line = JSON.stringify({ received_at: new Date().toISOString(), data }) + "\n";
+    fs.appendFileSync(path.join(__dirname, "valid_results.jsonl"), line, "utf8");
+    return res.status(200).json({ ok: true, saved: true, data });
+  } catch (e) {
+    const line = JSON.stringify({
+      received_at: new Date().toISOString(),
+      error: e.message,
+      raw_preview: String(req.body || "").slice(0, 300)
+    }) + "\n";
+    fs.appendFileSync(path.join(__dirname, "invalid_results.jsonl"), line, "utf8");
+    return res.status(400).json({ ok: false, saved: false, error: e.message });
+  }
+});
+
+// --- logs JSON (paged) ---
+app.get("/logs/valid", (req, res) => {
+  const list = readJsonl(path.join(__dirname, "valid_results.jsonl"));
+  const { page, limit, total, pages, items } = paginate(list, req.query.page, req.query.limit);
+  res.json({ page, limit, total, pages, items });
+});
+app.get("/logs/invalid", (req, res) => {
+  const list = readJsonl(path.join(__dirname, "invalid_results.jsonl"));
+  const { page, limit, total, pages, items } = paginate(list, req.query.page, req.query.limit);
+  res.json({ page, limit, total, pages, items });
+});
+
+// --- CSV export ---
+app.get("/logs/valid.csv", (req, res) => {
+  const rows = readJsonl(path.join(__dirname, "valid_results.jsonl")).map(r => ({
+    received_at: r.received_at,
+    product: JSON.stringify(r.data?.product ?? null),
+    shelf_life: JSON.stringify(r.data?.shelf_life ?? null),
+    status: JSON.stringify(r.data?.status ?? null),
+    metadata: JSON.stringify(r.data?.metadata ?? null),
+  }));
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.send(toCsv(rows));
+});
+app.get("/logs/invalid.csv", (req, res) => {
+  const rows = readJsonl(path.join(__dirname, "invalid_results.jsonl")).map(r => ({
+    received_at: r.received_at,
+    error: r.error,
+    raw_preview: r.raw_preview
+  }));
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.send(toCsv(rows));
+});
+
+// --- clean (optional) ---
+app.delete("/logs/clean", (req, res) => {
+  const file = req.query.file === "invalid" ? "invalid_results.jsonl" : "valid_results.jsonl";
+  const olderDays = parseInt(req.query.older_than_days || "0", 10);
+  const p = path.join(__dirname, file);
+  if (!fs.existsSync(p)) return res.json({ ok: true, file, deleted: 0, reason: "file not found" });
+  if (!olderDays || olderDays <= 0) return res.status(400).json({ ok: false, error: "older_than_days must be > 0" });
+  const raw = stripBom(fs.readFileSync(p, "utf8"));
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  const cutoff = Date.now() - olderDays * 86400000;
+  let kept = [], del = 0;
+  for (const l of lines) {
+    try {
+      const o = JSON.parse(l);
+      const t = new Date(o.received_at).getTime();
+      if (isFinite(t) && t < cutoff) { del++; continue; }
+      kept.push(l);
+    } catch { kept.push(l); }
+  }
+  fs.writeFileSync(p, kept.join("\n") + (kept.length ? "\n" : ""), "utf8");
+  res.json({ ok: true, file, deleted: del, kept: kept.length });
+});
+
+// --- simple tester UI ---
+app.get("/tester", (req, res) => {
+  res.type("html").send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>AI Shelf-Life Tester</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:900px}
+textarea{width:100%;height:200px}
+button{padding:8px 14px;margin-right:8px}
+pre{background:#f5f5f5;padding:12px;overflow:auto}
+</style></head><body>
+<h1>AI Shelf-Life Tester</h1>
+<p>Ubaci AI output (može biti tekst sa JSON blokom). Klikni <b>Validiraj</b>.</p>
+<div>
+  <button onclick="fillValid()">Ubaci valjani primjer</button>
+  <button onclick="fillInvalid()">Ubaci nevaljani primjer</button>
+</div>
+<textarea id="inp"></textarea>
+<div><button onclick="send()">Validiraj</button></div>
+<pre id="out"></pre>
+<script>
+function send(){
+  fetch('/llm-result',{method:'POST',headers:{'Content-Type':'text/plain; charset=utf-8'},body:document.getElementById('inp').value})
+    .then(r=>r.text()).then(t=>document.getElementById('out').textContent=t)
+    .catch(e=>document.getElementById('out').textContent=String(e));
+}
+function fillValid(){
+  document.getElementById('inp').value =
+\`Model kaže:
+{
+  "product":{"name":"Milk 2%","barcode":"3850123456789","category":"dairy"},
+  "shelf_life":{"unopened_days":7,"opened_days":3,"storage_temp":"cold","adjustment_factor":1},
+  "status":{"confidence":0.92,"reason_codes":["SKU_exact_match","temperature_normal"],"safe_to_consume":true},
+  "metadata":{"last_updated":"2025-09-02T10:00:00Z","source":"LLM"}
+}\`;
+}
+function fillInvalid(){
+  document.getElementById('inp').value =
+\`Model kaže:
+{
+  "product":{"name":"Milk","barcode":"123","category":null},
+  "shelf_life":{"unopened_days":-1,"opened_days":2,"storage_temp":"fridge","adjustment_factor":1.2,"note":"x"},
+  "status":{"confidence":1.2,"reason_codes":["unknown_code"],"safe_to_consume":true},
+  "metadata":{"last_update":"2025-09-02T10:00:00Z","source":"LLM"}
+}\`;
+}
+</script></body></html>`);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
+
+app.get("/dashboard", (req, res) => {
+  res.type("html").send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>AI Shelf-Life Dashboard</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
+h1{margin:0 0 16px}
+.controls{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
+th{background:#f7f7f7;text-align:left}
+.badge{display:inline-block;padding:2px 6px;border-radius:6px;background:#eee;font-size:12px}
+.stat{padding:6px 10px;background:#f5f5f5;border-radius:8px}
+</style></head><body>
+<h1>AI Shelf-Life – Dashboard</h1>
+<div class="controls">
+  <span class="stat" id="stat-total">Total: -</span>
+  <span class="stat" id="stat-valid">Valid: -</span>
+  <span class="stat" id="stat-invalid">Invalid: -</span>
+  <label>Tip:
+    <select id="type">
+      <option value="valid" selected>valid</option>
+      <option value="invalid">invalid</option>
+    </select>
+  </label>
+  <label>Limit:
+    <input id="limit" type="number" min="1" max="200" value="10" style="width:72px">
+  </label>
+  <button onclick="loadData()">Osvježi</button>
+</div>
+
+<table>
+  <thead id="thead"></thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<script>
+async function loadStats(){
+  const r = await fetch('/metrics'); const m = await r.json();
+  document.getElementById('stat-total').textContent = 'Total: ' + (m.totals?.received ?? '-');
+  document.getElementById('stat-valid').textContent = 'Valid: ' + (m.totals?.valid ?? '-');
+  document.getElementById('stat-invalid').textContent = 'Invalid: ' + (m.totals?.invalid ?? '-');
+}
+function cell(html){ const td=document.createElement('td'); td.innerHTML=html; return td; }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function loadData(){
+  await loadStats();
+  const type = document.getElementById('type').value;
+  const limit = parseInt(document.getElementById('limit').value||'10',10);
+  const r = await fetch(\`/logs/\${type}?page=1&limit=\${limit}\`);
+  const data = await r.json();
+
+  const thead = document.getElementById('thead');
+  const tbody = document.getElementById('tbody');
+  thead.innerHTML=''; tbody.innerHTML='';
+
+  if(type==='valid'){
+    thead.innerHTML = '<tr><th>Time</th><th>Product</th><th>Shelf life</th><th>Status</th><th>Metadata</th></tr>';
+    for(const it of data.items){
+      const tr = document.createElement('tr');
+      const p = it.data?.product||{};
+      const sl = it.data?.shelf_life||{};
+      const st = it.data?.status||{};
+      const md = it.data?.metadata||{};
+      tr.appendChild(cell(esc(it.received_at)));
+      tr.appendChild(cell('<b>'+esc(p.name)+'</b><br>Barcode: '+esc(p.barcode)+'<br><span class="badge">'+esc(p.category)+'</span>'));
+      tr.appendChild(cell('unopened: '+esc(sl.unopened_days)+' d<br>opened: '+esc(sl.opened_days)+' d<br>temp: '+esc(sl.storage_temp)));
+      tr.appendChild(cell('confidence: '+esc(st.confidence)+'<br>safe: '+esc(st.safe_to_consume)+'<br>codes: '+esc((st.reason_codes||[]).join(', '))));
+      tr.appendChild(cell('updated: '+esc(md.last_updated)+'<br>source: '+esc(md.source)));
+      tbody.appendChild(tr);
+    }
+  } else {
+    thead.innerHTML = '<tr><th>Time</th><th>Error</th><th>Preview</th></tr>';
+    for(const it of data.items){
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(esc(it.received_at)));
+      tr.appendChild(cell('<span class="badge">'+esc(it.error)+'</span>'));
+      tr.appendChild(cell('<pre style="white-space:pre-wrap;margin:0">'+esc(it.raw_preview||'')+'</pre>'));
+      tbody.appendChild(tr);
+    }
+  }
+}
+loadData();
+</script>
+</body></html>`);
+});
+

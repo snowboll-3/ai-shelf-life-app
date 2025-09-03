@@ -1,0 +1,53 @@
+﻿# AI Shelf-Life – Test Plan
+
+## 1. Health check
+curl.exe "http://localhost:3000/health"
+
+## 2. Version info
+curl.exe "http://localhost:3000/version"
+
+## 3. Validan AI output
+curl.exe -X POST http://localhost:3000/llm-result -H "Content-Type: text/plain; charset=utf-8" --data-binary "@sample_ai_output.txt"
+
+## 4. Nevaljan AI output
+curl.exe -X POST http://localhost:3000/llm-result -H "Content-Type: text/plain; charset=utf-8" --data-binary "@sample_ai_bad.txt"
+
+## 5. Pregled logova
+curl.exe "http://localhost:3000/logs/valid?page=1&limit=2"
+curl.exe "http://localhost:3000/logs/invalid?page=1&limit=2"
+
+## 6. Export u CSV
+http://localhost:3000/logs/valid.csv
+http://localhost:3000/logs/invalid.csv
+
+## 7. Čišćenje starih zapisa
+curl.exe -X DELETE "http://localhost:3000/logs/clean?file=invalid&older_than_days=1"
+
+## 8. Web tester
+http://localhost:3000/tester
+---------------------------------------
+# DODATAK: PM2 brzi testovi i održavanje
+
+## A) Status procesa
+pm2 status
+
+## B) Logovi aplikacije (uživo)
+pm2 logs ai-shelf-life               # izađi s Ctrl+C
+pm2 logs ai-shelf-life --lines 100   # zadnjih 100 linija
+
+## C) Restart / Stop / Start
+pm2 restart ai-shelf-life
+pm2 stop ai-shelf-life
+pm2 start ai-shelf-life
+
+## D) Autostart nakon restarta računala
+pm2 save                 # spremi trenutne procese
+pm2-startup install      # omogući PM2 autostart (Windows startup task)
+
+## E) Ako nešto “zapne” nakon restarta
+pm2 resurrect            # vrati spremljene procese (nakon pm2 save)
+
+## F) Uklanjanje iz PM2
+pm2 delete ai-shelf-life
+pm2 save                 # spremi promjene u autostart listu
+---------------------------------------

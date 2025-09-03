@@ -1,0 +1,6 @@
+﻿{
+  "product":{"name":"Yogurt 3.2%","barcode":"3850987654321","category":"dairy"},
+  "shelf_life":{"unopened_days":10,"opened_days":4,"storage_temp":"cold","adjustment_factor":1},
+  "status":{"confidence":0.88,"reason_codes":["SKU_fuzzy_match","temperature_normal"],"safe_to_consume":true},
+  "metadata":{"last_updated":"2025-09-03T10:30:00Z","source":"LLM"}
+}
