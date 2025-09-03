@@ -4,6 +4,7 @@ const path = require("path");
 const { parseAndValidateLLM } = require("./validateShelfLife");
 
 const app = express();
+app.use(express.static(path.join(__dirname, "public")));
 app.use(express.text({ type: "*/*", limit: "1mb" }));
 
 // --- utils ---
@@ -314,3 +315,6 @@ app.delete("/logs/clean", (req, res) => {
     return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e) });
   }
 });
+
+
+
