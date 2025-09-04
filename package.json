@@ -1,28 +1,34 @@
-﻿{
-    "name":  "ai-shelf-life-app",
-    "version":  "1.0.0",
-    "description":  "",
-    "main":  "server.js",
-    "scripts":  {
-                    "test":  "echo \"Error: no test specified\" \u0026\u0026 exit 1",
-                    "build:types":  "json2ts -i shelf_life_v2.schema.json -o types/shelf_life_v2.d.ts",
-                    "start":  "node server.js"
-                },
-    "keywords":  [
-
-                 ],
-    "author":  "",
-    "license":  "ISC",
-    "dependencies":  {
-                         "ajv":  "^8.17.1",
-                         "ajv-formats":  "^3.0.1",
-                         "dotenv":  "^17.2.1",
-                         "express":  "^5.1.0"
-                     },
-    "devDependencies":  {
-                            "@types/node":  "^24.3.0",
-                            "json-schema-to-typescript":  "^15.0.4",
-                            "ts-node":  "^10.9.2",
-                            "typescript":  "^5.9.2"
-                        }
+{
+    "name": "ai-shelf-life-app",
+    "version": "1.0.0",
+    "description": "",
+    "main": "server.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "build:types": "json2ts -i shelf_life_v2.schema.json -o types/shelf_life_v2.d.ts",
+        "start": "node server.js"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "ajv": "^8.17.1",
+        "ajv-formats": "^3.0.1",
+        "dotenv": "^17.2.1",
+        "express": "^5.1.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.3.0",
+        "json-schema-to-typescript": "^15.0.4",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.9.2"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/snowboll-3/ai-shelf-life-app.git"
+    },
+    "bugs": {
+        "url": "https://github.com/snowboll-3/ai-shelf-life-app/issues"
+    },
+    "homepage": "https://github.com/snowboll-3/ai-shelf-life-app#readme"
 }
