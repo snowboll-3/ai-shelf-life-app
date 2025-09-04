@@ -1,0 +1,217 @@
+﻿<!DOCTYPE html>
+<html lang="hr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Shelf-Life – Nadzorna ploča</title>
+  <style>
+    :root {
+      --green: #16a34a;   /* dobro */
+      --yellow: #eab308;  /* upozorenje */
+      --orange: #f97316;  /* uskoro */
+      --red: #ef4444;     /* hitno */
+      --gray: #6b7280;
+      --bg: #0b1220;
+      --card: #111827;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, Arial, sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 16px; display:flex; gap:12px; align-items:center; border-bottom:1px solid #1f2937; }
+    h1 { font-size: 20px; margin:0; }
+    .pill { padding: 6px 10px; border-radius: 999px; background:#1f2937; color: var(--muted); font-size: 12px; }
+    main { padding: 16px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+    .btn { padding:8px 12px; border-radius:8px; border:1px solid #374151; background:#111827; color:#e5e7eb; cursor:pointer; }
+    .btn:hover { background:#0f172a; }
+    table { width:100%; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
+    thead th { text-align:left; font-weight:600; color:var(--muted); padding: 12px; background:#0f1626; }
+    tbody td { padding: 12px; border-top:1px solid #1f2937; vertical-align: top; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+    .b-green { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--green); }
+    .b-yellow { background: color-mix(in srgb, var(--yellow) 20%, transparent); color: var(--yellow); }
+    .b-orange { background: color-mix(in srgb, var(--orange) 20%, transparent); color: var(--orange); }
+    .b-red    { background: color-mix(in srgb, var(--red) 20%, transparent);    color: var(--red); }
+    .muted { color: var(--muted); font-size:12px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .right { text-align:right; }
+    .center { text-align:center; }
+    .flex-col { display:flex; flex-direction:column; gap:4px; }
+    .small { font-size:12px; color:var(--muted); }
+    .foot { margin-top:10px; color:var(--muted); font-size:12px; }
+    @supports not (background: color-mix(in srgb, red 20%, transparent)) {
+      .b-green { background: var(--green);  color: #fff; }
+      .b-yellow{ background: var(--yellow); color: #111; }
+      .b-orange{ background: var(--orange); color: #111; }
+      .b-red   { background: var(--red);    color: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AI Shelf-Life – Nadzorna ploča</h1>
+    <span id="counts" class="pill">Učitavam…</span>
+    <a class="btn" href="/scan.html">📷 Skeniraj</a>
+  </header>
+
+  <main>
+    <div class="row">
+      <label>Prikaz:</label>
+      <select id="typeSel" class="btn">
+        <option value="valid" selected>ispravni zapisi</option>
+        <option value="invalid">neispravni zapisi</option>
+      </select>
+
+      <label>Limit:</label>
+      <input id="limitInp" class="btn" style="width:90px" type="number" min="1" max="500" value="100" />
+
+      <button id="refreshBtn" class="btn">🔄 Osvježi</button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Vrijeme</th>
+          <th>Proizvod</th>
+          <th>Rok trajanja</th>
+          <th>Status</th>
+          <th>Kvaliteta</th>
+          <th>Metapodaci</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="6" class="center muted">Učitavam…</td></tr>
+      </tbody>
+    </table>
+
+    <div class="foot">
+      Boje pokazuju koliko je proizvod još dobar za konzumiranje do isteka roka trajanja:
+      <span class="badge b-green">≥60d</span> |
+      <span class="badge b-yellow">30–59d</span> |
+      <span class="badge b-orange">11–29d</span> |
+      <span class="badge b-red">≤10d</span>
+    </div>
+  </main>
+
+<script>
+  function bandFromDaysLeft(d) {
+    if (d <= 10) return {cls:"b-red",    label:"hitno"};
+    if (d <= 29) return {cls:"b-orange", label:"uskoro"};
+    if (d <= 59) return {cls:"b-yellow", label:"upozorenje"};
+    return {cls:"b-green", label:"dobro"};
+  }
+  function pctFromDaysLeft(d) {
+    return Math.max(0, Math.min(100, Math.round((d / 90) * 100)));
+  }
+  function fmt(v) { return (v ?? "") + ""; }
+
+  async function loadData(kind = "valid", limit = 100) {
+    const url = /logs/?limit=;
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  }
+
+  function renderValid(items) {
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = "";
+    items.sort((a,b)=> new Date(b.received_at) - new Date(a.received_at));
+
+    for (const it of items) {
+      const d  = it.data || {};
+      const p  = d.product || {};
+      const sl = d.shelf_life || {};
+      const st = d.status || {};
+      const md = d.metadata || {};
+
+      const days = Number(sl.unopened_days ?? 0);
+      const band = bandFromDaysLeft(days);
+      const pct  = pctFromDaysLeft(days);
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = 
+        <td><div class="flex-col"><div class="mono"></div></div></td>
+        <td>
+          <div class="flex-col">
+            <div><strong></strong></div>
+            <div class="small">Barkod: </div>
+            <div class="small"></div>
+          </div>
+        </td>
+        <td>
+          <div class="flex-col">
+            <div>neotvoren: <strong> d</strong></div>
+            <div>otvoren:  d</div>
+            <div>temp.: </div>
+          </div>
+        </td>
+        <td>
+          <div class="flex-col">
+            <div>pouzdanost: </div>
+            <div>sigurno za konzumiranje: </div>
+            <div class="small">razlozi: </div>
+          </div>
+        </td>
+        <td class="right">
+          <div class="flex-col" style="align-items:flex-end">
+            <div><span class="badge ">% • </span></div>
+            <div class="small">prema neotvorenim danima</div>
+          </div>
+        </td>
+        <td>
+          <div class="flex-col">
+            <div class="small">ažurirano: </div>
+            <div class="small">izvor: </div>
+          </div>
+        </td>;
+      tbody.appendChild(tr);
+    }
+
+    if (!items.length) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = <td colspan="6" class="center muted">Nema podataka.</td>;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderInvalid(items) {
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = "";
+    for (const it of items) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = 
+        <td class="mono"></td>
+        <td colspan="4">
+          <div class="badge b-red">neispravno</div>
+          <div class="small" style="margin-top:6px; color:#fca5a5"></div>
+        </td>
+        <td><pre class="small" style="white-space:pre-wrap; color:#9ca3af; margin:0"></pre></td>;
+      tbody.appendChild(tr);
+    }
+    if (!items.length) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = <td colspan="6" class="center muted">Nema neispravnih zapisa.</td>;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function refresh() {
+    const kind  = document.getElementById("typeSel").value;
+    const limit = Number(document.getElementById("limitInp").value || 100);
+    document.getElementById("tbody").innerHTML = <tr><td colspan="6" class="center muted">Učitavam…</td></tr>;
+    try {
+      const data = await loadData(kind, limit);
+      document.getElementById("counts").textContent = Ukupno:  | Prikazano:  ();
+      if (kind === "valid") renderValid(data.items || []);
+      else renderInvalid(data.items || []);
+    } catch (e) {
+      document.getElementById("tbody").innerHTML = <tr><td colspan="6" class="center" style="color:#ef4444">Greška: </td></tr>;
+    }
+  }
+
+  document.getElementById("refreshBtn").addEventListener("click", refresh);
+  refresh();
+</script>
+</body>
+</html>

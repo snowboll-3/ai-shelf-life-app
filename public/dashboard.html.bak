@@ -6,175 +6,175 @@
   <title>AI Shelf-Life – Dashboard</title>
   <style>
     :root{
-      --red:#fee2e2; --orange:#ffedd5; --yellow:#fef9c3; --green:#dcfce7;
-      --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+      --bg:#0b0f14; --card:#0f1621; --muted:#a7b0bd; --text:#e8eef6;
+      --green:#16a34a; --yellow:#eab308; --orange:#f97316; --red:#dc2626; --blue:#60a5fa;
     }
-    body{font-family: system-ui, Arial, sans-serif; margin:16px; color:var(--fg);}
-    h1{margin:0 0 8px 0}
-    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px}
-    .pill{padding:6px 10px; border-radius:999px; background:#f3f4f6; font-size:14px}
-    button{padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:white; cursor:pointer}
-    button:hover{background:#f9fafb}
-    table{width:100%; border-collapse:collapse; margin-top:12px; font-size:14px}
-    thead th{position:sticky; top:0; background:white; z-index:1; border-bottom:1px solid var(--line); text-align:left; padding:10px}
-    tbody td{border-bottom:1px solid var(--line); padding:10px; vertical-align:top}
-    tr.red    td{background:var(--red)   !important;}
-    tr.orange td{background:var(--orange)!important;}
-    tr.yellow td{background:var(--yellow)!important;}
-    tr.green  td{background:var(--green) !important;}
-    .muted{color:var(--muted)}
-    .codes{opacity:.9; font-size:12px}
-    .nowrap{white-space:nowrap}
-    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
-    .legend{display:flex; gap:8px; align-items:center}
-    .sw{width:14px; height:14px; border-radius:3px; display:inline-block; border:1px solid var(--line)}
+    *{box-sizing:border-box} body{margin:0; font-family:system-ui, Arial, sans-serif; background:var(--bg); color:var(--text);}
+    .wrap{max-width:1100px; margin:24px auto; padding:0 16px;}
+    h1{margin:0 0 10px 0; font-weight:700}
+    .meta{display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px; color:var(--muted)}
+    .chip{padding:4px 10px; background:#101826; border:1px solid #1d2736; border-radius:999px;}
+    .row{display:flex; gap:8px; align-items:center}
+    button, select{background:#132033; color:var(--text); border:1px solid #233247; padding:8px 12px; border-radius:10px; cursor:pointer}
+    button:hover{background:#172844}
+    table{width:100%; border-collapse:separate; border-spacing:0 8px}
+    thead th{color:var(--muted); font-weight:600; text-align:left; padding:6px 10px}
+    tbody tr{background:var(--card); border:1px solid #1b2636}
+    tbody td{padding:10px}
+    .prod{font-weight:700}
+    .muted{color:var(--muted); font-size:12px}
+    .col{display:flex; flex-direction:column; gap:4px}
+    .pill{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #243248; color:var(--muted)}
+    .bar{height:8px; background:#0f1a27; border:1px solid #1e2a3b; border-radius:999px; overflow:hidden}
+    .bar > span{display:block; height:100%}
+    .g{background:var(--green)} .y{background:var(--yellow)} .o{background:var(--orange)} .r{background:var(--red)}
+    .tag{display:inline-block; padding:2px 6px; border-radius:6px; background:#132033; border:1px solid #243248; color:var(--muted); font-size:12px}
+    .right{display:flex; gap:6px; align-items:center; justify-content:flex-end}
+    .danger{color:var(--red)} .warn{color:var(--orange)}
   </style>
 </head>
 <body>
-  <h1>AI Shelf-Life – Dashboard</h1>
-  <div class="row">
-    <div class="pill">Total: <span id="total">–</span></div>
-    <div class="pill">Valid: <span id="valid">–</span></div>
-    <div class="pill">Invalid: <span id="invalid">–</span></div>
-    <div class="pill legend">
-      <span class="sw" style="background:#fee2e2"></span> ≤10d
-      <span class="sw" style="background:#ffedd5"></span> ≤30d
-      <span class="sw" style="background:#fef9c3"></span> ≤75d
-      <span class="sw" style="background:#dcfce7"></span> >75d
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between; align-items:flex-end">
+      <div>
+        <h1>AI Shelf-Life – Dashboard</h1>
+        <div id="counters" class="meta"></div>
+      </div>
+      <div class="row" style="gap:8px">
+        <label class="row" style="gap:6px; color:var(--muted)">
+          Tip:
+          <select id="typeSel">
+            <option value="valid">valid</option>
+            <option value="invalid">invalid</option>
+          </select>
+        </label>
+        <label class="row" style="gap:6px; color:var(--muted)">
+          Limit:
+          <select id="limitSel">
+            <option>10</option>
+            <option selected>100</option>
+            <option>200</option>
+          </select>
+        </label>
+        <button id="refreshBtn">Osvježi</button>
+      </div>
     </div>
-    <label>Limit: <input id="limit" class="mono" type="number" min="1" value="100" style="width:80px"></label>
-    <button id="refresh">Osvježi</button>
-    <button onclick="location.href='/scan.html'">📷 Scan</button>
+
+    <div style="margin:10px 0 16px 0">
+      <span class="tag">🧪 Tester</span>
+      <span id="tipMsg" class="tag">Savjet: crveno ≤10 dana, narančasto ≤30, žuto ≤75 dana, zeleno >75 dana</span>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:190px">Time</th>
+          <th style="width:260px">Product</th>
+          <th style="width:210px">Shelf life</th>
+          <th>Status</th>
+          <th style="width:240px">Metadata</th>
+        </tr>
+      </thead>
+      <tbody id="tb"></tbody>
+    </table>
   </div>
 
-  <table id="tbl">
-    <thead>
-      <tr>
-        <th class="nowrap">Time</th>
-        <th>Product</th>
-        <th class="nowrap">Shelf life</th>
-        <th>Status</th>
-        <th>Metadata</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-
 <script>
-const $ = sel => document.querySelector(sel);
+const fmt = (n, unit="d") => (n ?? 0) + " " + unit;
+const riskBucket = (days) => {
+  if (days == null) return {cls:"y", label:"n/a"};
+  if (days <= 10) return {cls:"r", label:"≤10 d"};
+  if (days <= 30) return {cls:"o", label:"≤30 d"};
+  if (days <= 75) return {cls:"y", label:"≤75 d"};
+  return {cls:"g", label:">75 d"};
+};
+const pctBar = (pct) => {
+  let cls = "g"; // default
+  if (pct <= 15) cls = "r";
+  else if (pct <= 40) cls = "o";
+  else if (pct <= 70) cls = "y";
+  return `<div class="bar"><span class="${cls}" style="width:${Math.max(0, Math.min(100, pct))}%"></span></div>`;
+};
 
-function classify(daysLeft){
-  if (daysLeft <= 10) return {name:"red",    color:"#fee2e2"};
-  if (daysLeft <= 30) return {name:"orange", color:"#ffedd5"};
-  if (daysLeft <= 75) return {name:"yellow", color:"#fef9c3"};
-  return {name:"green", color:"#dcfce7"};
-}
+async function load(type="valid", limit=100) {
+  const res = await fetch(`/logs/${type}?limit=${limit}`);
+  const json = await res.json();
+  const tb = document.getElementById("tb");
+  tb.innerHTML = "";
 
-// TEMP: dok ne uvedemo stvarni datum isteka,
-// days_left = unopened_days
-function computeDaysLeft(item){
-  const sl = item?.data?.shelf_life || {};
-  return Number(sl.unopened_days ?? 0);
-}
-
-function esc(x){ return String(x == null ? "" : x); }
-
-async function fetchJson(url){
-  const r = await fetch(url, {cache:"no-store"});
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  return r.json();
-}
-
-async function loadCounts(){
-  const v = await fetchJson(`/logs/valid?limit=1`);
-  const i = await fetchJson(`/logs/invalid?limit=1`);
-  $("#valid").textContent = v.total ?? "0";
-  $("#invalid").textContent = i.total ?? "0";
-  $("#total").textContent = (Number(v.total||0)+Number(i.total||0)).toString();
-}
-
-function paintRow(tr, colorHex){
-  // sigurnosni “inline” fallback – boji svako <td>
-  for (const td of tr.children) td.style.backgroundColor = colorHex;
-}
-
-async function loadTable(){
-  const limit = Number($("#limit").value || 100);
-  const data = await fetchJson(`/logs/valid?limit=${limit}`);
-  const items = (data.items || []).map(it => {
-    const daysLeft = computeDaysLeft(it);
-    return {it, daysLeft};
-  });
-
-  // SORT: najkritičniji na vrhu
-  items.sort((a,b) => a.daysLeft - b.daysLeft);
-
-  const tbody = $("#tbl tbody");
-  tbody.innerHTML = "";
-
-  for (const row of items){
-    const it = row.it;
-    const p = it?.data?.product || {};
-    const sl = it?.data?.shelf_life || {};
-    const st = it?.data?.status || {};
-    const md = it?.data?.metadata || {};
-
-    const cls = classify(row.daysLeft);
-
-    const tr = document.createElement("tr");
-    tr.className = cls.name;
-
-    const tdTime = document.createElement("td");
-    tdTime.innerHTML = `<div class="mono">${esc(it.received_at)}</div>`;
-    tr.appendChild(tdTime);
-
-    const tdProd = document.createElement("td");
-    tdProd.innerHTML = `
-      <div><strong>${esc(p.name || "(no name)")}</strong></div>
-      <div class="mono">Barcode: ${esc(p.barcode||"")}</div>
-      <div class="muted">${esc(p.category||"")}</div>
-    `;
-    tr.appendChild(tdProd);
-
-    const tdShelf = document.createElement("td");
-    tdShelf.innerHTML = `
-      <div>unopened: <strong>${esc(sl.unopened_days)} d</strong></div>
-      <div>opened: <strong>${esc(sl.opened_days)} d</strong></div>
-      <div>temp: <strong>${esc(sl.storage_temp)}</strong></div>
-      <div class="mono muted">days_left: ${row.daysLeft}</div>
-    `;
-    tr.appendChild(tdShelf);
-
-    const tdStatus = document.createElement("td");
-    tdStatus.innerHTML = `
-      <div>confidence: <strong>${esc(st.confidence)}</strong></div>
-      <div>safe: <strong>${esc(st.safe_to_consume)}</strong></div>
-      <div class="codes">codes: ${esc((st.reason_codes||[]).join(", "))}</div>
-    `;
-    tr.appendChild(tdStatus);
-
-    const tdMeta = document.createElement("td");
-    tdMeta.innerHTML = `
-      <div>updated: <span class="mono">${esc(md.last_updated)}</span></div>
-      <div>source: <strong>${esc(md.source)}</strong></div>
-    `;
-    tr.appendChild(tdMeta);
-
-    // Inline bojanje (fallback da boja bude SIGURNO vidljiva)
-    paintRow(tr, cls.color);
-    tbody.appendChild(tr);
+  if (type === "valid") {
+    document.getElementById("counters").innerHTML =
+      `<span class="chip">Total: ${json.total}</span>
+       <span class="chip">Valid: ${json.total}</span>
+       <span class="chip">Invalid: <a href="/logs/invalid?limit=5" style="color:var(--blue)">vidi</a></span>`;
+  } else {
+    document.getElementById("counters").innerHTML =
+      `<span class="chip">Total invalid: ${json.total}</span>
+       <span class="chip"><a href="/logs/invalid.csv" style="color:var(--blue)">Preuzmi CSV</a></span>`;
   }
+
+  (json.items || []).forEach(it => {
+    const p = it.data?.product || {};
+    const sl = it.data?.shelf_life || {};
+    const st = it.data?.status || {};
+    const md = it.data?.metadata || {};
+
+    // heuristika: “preostalo” = unopened_days (nemamo stvarni datum isteka u logu)
+    const days = sl.unopened_days ?? 0;
+    const bucket = riskBucket(days);
+
+    // “postotak” prikaz – čisto vizualno (pretpostavi 100 dana = 100%)
+    const pct = Math.max(0, Math.min(100, Math.round((days / 100) * 100)));
+
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td class="col">
+        <div>${new Date(it.received_at).toISOString()}</div>
+        <span class="pill ${bucket.cls}">${bucket.label}</span>
+      </td>
+
+      <td class="col">
+        <div class="prod">${p.name ?? "-"}</div>
+        <div class="muted">Barcode: ${p.barcode ?? "-"}</div>
+        <div class="muted">${p.category ?? "-"}</div>
+      </td>
+
+      <td class="col">
+        <div>unopened: <b>${fmt(sl.unopened_days)}</b></div>
+        <div>opened: <b>${fmt(sl.opened_days)}</b></div>
+        <div>temp: <b>${sl.storage_temp ?? "-"}</b></div>
+      </td>
+
+      <td class="col">
+        <div class="row" style="gap:8px; align-items:center">
+          <div><b>${pct}%</b> • ${pct >= 60 ? "&gt;60%" : (pct >= 30 ? "30–60%" : "&lt;30%")}</div>
+        </div>
+        ${pctBar(pct)}
+        <div class="muted">confidence: ${st.confidence ?? "-"}</div>
+        <div class="muted">safe: ${st.safe_to_consume ? "true" : "false"}</div>
+        <div class="muted">codes: ${(st.reason_codes||[]).join(", ") || "-"}</div>
+      </td>
+
+      <td class="col">
+        <div class="muted">updated: ${md.last_updated ?? "-"}</div>
+        <div class="muted">source: ${md.source ?? "-"}</div>
+      </td>
+    `;
+    tb.appendChild(row);
+  });
 }
 
-async function refreshAll(){
-  try{
-    await Promise.all([loadCounts(), loadTable()]);
-  }catch(e){ console.error(e); }
-}
+document.getElementById("refreshBtn").addEventListener("click", () => {
+  load(document.getElementById("typeSel").value, Number(document.getElementById("limitSel").value||100));
+});
+document.getElementById("typeSel").addEventListener("change", () => {
+  load(document.getElementById("typeSel").value, Number(document.getElementById("limitSel").value||100));
+});
+document.getElementById("limitSel").addEventListener("change", () => {
+  load(document.getElementById("typeSel").value, Number(document.getElementById("limitSel").value||100));
+});
 
-$("#refresh").addEventListener("click", refreshAll);
-refreshAll();
-setInterval(refreshAll, 10000);
+load("valid", 100);
 </script>
 </body>
 </html>
