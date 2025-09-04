@@ -11,3 +11,27 @@ yarn-error.log*
 # naše lokalne rezultate po želji:
 valid_results.jsonl
 invalid_results.jsonl
+# node / build
+node_modules/
+dist/
+build/
+npm-debug.log*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# local app data
+data/*.json
+data/*.jsonl
+data/opened.json
+
+# temp / served dumps
+__served_*.html
+public/ALIVE.txt
+
+# backups
+*.bak
+*.bak*
