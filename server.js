@@ -4,6 +4,9 @@ const path = require("path");
 const { parseAndValidateLLM } = require("./validateShelfLife");
 
 const app = express();
+
+app.get('/dashboard.html', (req,res)=>res.redirect(301,'/dashboard.hr.html'));
+app.get('/dashboard', (req,res)=>res.redirect(301,'/dashboard.hr.html'));
 app.use(express.json());app.use(express.static(path.join(__dirname, "public")));
 app.use(express.text({ type: "*/*", limit: "1mb" }));
 
@@ -366,5 +369,7 @@ app.delete("/items/opened", (req, res) => {
   res.json({ ok: true, key });
 });
 /* ----------------------------------------------------------------- */
+
+
 
 
