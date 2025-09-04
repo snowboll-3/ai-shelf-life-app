@@ -4,7 +4,7 @@ const path = require("path");
 const { parseAndValidateLLM } = require("./validateShelfLife");
 
 const app = express();
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.json());app.use(express.static(path.join(__dirname, "public")));
 app.use(express.text({ type: "*/*", limit: "1mb" }));
 
 // --- utils ---
@@ -320,3 +320,51 @@ app.delete("/logs/clean", (req, res) => {
 
 
 app.get('/scan',(req,res)=>res.sendFile(path.join(__dirname,'public','scan.html')));
+/* ---------------- Opened items persistence (JSON) ---------------- */
+const OPENED_FILE = path.join(__dirname, "data", "opened.json");
+
+function loadOpenedMap() {
+  try {
+    if (!fs.existsSync(OPENED_FILE)) return {};
+    const raw = fs.readFileSync(OPENED_FILE, "utf8");
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { console.error("opened: read error:", e); return {}; }
+}
+function saveOpenedMap(map) {
+  try {
+    fs.writeFileSync(OPENED_FILE, JSON.stringify(map, null, 2));
+  } catch (e) { console.error("opened: write error:", e); }
+}
+
+/** GET /items/opened?keys=a,b,c  -> { key: iso, ... } */
+app.get("/items/opened", (req, res) => {
+  const all = loadOpenedMap();
+  const keys = String(req.query.keys || "").split(",").map(s => s.trim()).filter(Boolean);
+  if (!keys.length) return res.json(all);
+  const out = {};
+  for (const k of keys) if (all[k]) out[k] = all[k];
+  res.json(out);
+});
+
+/** POST /items/opened { key, opened_at? } */
+app.post("/items/opened", (req, res) => {
+  const { key, opened_at } = req.body || {};
+  if (!key) return res.status(400).json({ error: "key required" });
+  const all = loadOpenedMap();
+  all[key] = opened_at || new Date().toISOString();
+  saveOpenedMap(all);
+  res.json({ ok: true, key, opened_at: all[key] });
+});
+
+/** DELETE /items/opened?key=... */
+app.delete("/items/opened", (req, res) => {
+  const key = String(req.query.key || "");
+  if (!key) return res.status(400).json({ error: "key required" });
+  const all = loadOpenedMap();
+  delete all[key];
+  saveOpenedMap(all);
+  res.json({ ok: true, key });
+});
+/* ----------------------------------------------------------------- */
+
+

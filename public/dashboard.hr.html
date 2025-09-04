@@ -1,0 +1,307 @@
+﻿<!DOCTYPE html>
+<html lang="hr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Shelf-Life – Nadzorna ploča</title>
+  <style>
+    :root {
+      --green:#16a34a; --yellow:#eab308; --orange:#f97316; --red:#ef4444;
+      --gray:#6b7280; --bg:#0b1220; --card:#111827; --text:#e5e7eb; --muted:#9ca3af;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    header{padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;border-bottom:1px solid #1f2937}
+    h1{font-size:20px;margin:0}
+    .pill{padding:6px 10px;border-radius:999px;background:#1f2937;color:var(--muted);font-size:12px}
+    main{padding:16px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    .btn{padding:8px 12px;border-radius:8px;border:1px solid #374151;background:#111827;color:#e5e7eb;cursor:pointer}
+    .btn:hover{background:#0f172a}
+    table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden}
+    thead th{text-align:left;font-weight:600;color:var(--muted);padding:12px;background:#0f1626}
+    tbody td{padding:12px;border-top:1px solid #1f2937;vertical-align:top}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+    .b-green{background:color-mix(in srgb, var(--green) 20%, transparent);color:var(--green)}
+    .b-yellow{background:color-mix(in srgb, var(--yellow) 20%, transparent);color:var(--yellow)}
+    .b-orange{background:color-mix(in srgb, var(--orange) 20%, transparent);color:var(--orange)}
+    .b-red{background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red)}
+    .muted{color:var(--muted);font-size:12px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+    .right{text-align:right}.center{text-align:center}.flex-col{display:flex;flex-direction:column;gap:4px}
+    .small{font-size:12px;color:var(--muted)} .foot{margin-top:10px;color:var(--muted);font-size:12px}
+    @supports not (background: color-mix(in srgb, red 20%, transparent)) {
+      .b-green{background:var(--green);color:#fff}.b-yellow{background:var(--yellow);color:#111}
+      .b-orange{background:var(--orange);color:#111}.b-red{background:var(--red);color:#fff}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AI Shelf-Life – Nadzorna ploča</h1>
+    <span id="counts" class="pill">Učitavam…</span>
+    <a class="btn" href="/scan.html">📷 Skeniraj</a>
+    <a class="btn" href="/dashboard.en.html" aria-label="Switch to English">EN</a>
+  </header>
+
+  <main>
+    <div class="row">
+      <label>Prikaz:</label>
+      <select id="typeSel" class="btn">
+        <option value="valid" selected>ispravni zapisi</option>
+        <option value="invalid">neispravni zapisi</option>
+      </select>
+      <label>Limit:</label>
+      <input id="limitInp" class="btn" style="width:90px" type="number" min="1" max="500" value="100" />
+      <button id="refreshBtn" class="btn">🔄 Osvježi</button>
+    </div>
+
+    
+    <table role="table" aria-label="Tablica zapisa o proizvodima">
+      <thead>
+        <tr>
+          <th>Vrijeme</th><th>Proizvod</th><th>Rok trajanja</th><th>Status</th><th>Kvaliteta</th><th>Metapodaci</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="6" class="center muted">Učitavam…</td></tr>
+      </tbody>
+    </table>
+
+    <div class="foot">
+      Boje pokazuju koliko je proizvod još dobar za konzumiranje do isteka roka trajanja:
+      <span class="badge b-green">≥60d</span> | <span class="badge b-yellow">30–59d</span> |
+      <span class="badge b-orange">11–29d</span> | <span class="badge b-red">≤10d</span>
+    </div>
+  </main>
+
+<script>
+  // ===== Helpers =====
+  const fmtDate = iso => new Intl.DateTimeFormat(
+    (navigator.languages && navigator.languages[0]) || navigator.language || "hr",
+    { dateStyle:"medium", timeStyle:"short" }
+  ).format(new Date(iso));
+
+  function relTime(iso) {
+    try {
+      const d = new Date(iso || Date.now());
+      const diff = (d - new Date())/1000, abs=Math.abs(diff);
+      const rtf = new Intl.RelativeTimeFormat((navigator.languages&&navigator.languages[0])||navigator.language||"hr",{numeric:"auto"});
+      if (abs<60) return rtf.format(Math.round(diff),"second");
+      const m=diff/60; if (Math.abs(m)<60) return rtf.format(Math.round(m),"minute");
+      const h=diff/3600; if (Math.abs(h)<24) return rtf.format(Math.round(h),"hour");
+      const d2=diff/86400; return rtf.format(Math.round(d2),"day");
+    } catch { return ""; }
+  }
+
+  function bandFromDaysLeft(d){ if(d<=10) return {cls:"b-red",label:"hitno"}; if(d<=29) return{cls:"b-orange",label:"uskoro"}; if(d<=59) return{cls:"b-yellow",label:"upozorenje"}; return{cls:"b-green",label:"dobro"};}
+  function pctFromDaysLeft(d){ const x=Math.max(0,Math.min(60,Number(d)||0)); return Math.round((x/60)*100); }
+  function fmt(v){ return (v ?? "") + ""; }
+
+  // temperature HR
+  const TEMP_HR={ cold:"hladno", refrigerated:"hladno", cool:"rashlađeno", room:"sobna", ambient:"sobna", warm:"toplo", hot:"vruće", frozen:"zamrznuto", freezer:"zamrzivač" };
+  function tTempHR(v){ if(v==null) return ""; const key=String(v).toLowerCase().trim(); return TEMP_HR[key] ?? v; }
+
+  // category HR
+  const CATEGORY_HR={ dairy:"mliječni proizvodi",unknown:"nepoznato" };
+  function tCategoryHR(v){ if(v==null) return ""; const key=String(v).toLowerCase().trim().replace(/[\s\/-]+/g,"_"); return CATEGORY_HR[key] ?? v; }
+
+  // status HR
+  function tBoolHR(v){ return v ? "DA" : "NE"; }
+  function fmtPct(x){ const n=Number(x); if(!isFinite(n)) return ""; return Math.round(n*100)+"%"; }
+  const REASON_HR={ SKU_fuzzy_match:"neprecizno podudaranje artikla", SKU_exact_match:"točno podudaranje artikla", temperature_normal:"temperatura normalna", near_expiry:"blizu isteka", ok:"u redu" };
+  function tReasonHR(code){ return REASON_HR[code] || code; }
+
+  // uniq
+  function uniqItems(items){
+    const seen=new Set(), out=[];
+    for(const it of items||[]){
+      const d=it.data||{}, p=d.product||{}, md=d.metadata||{};
+      const key=`${p.barcode||p.name}__${md.last_updated||it.received_at}`;
+      if(seen.has(key)) continue; seen.add(key); out.push(it);
+    }
+    return out;
+  }
+
+  // key + opened API
+  function itemKey(it){
+    const d=it.data||{}, p=d.product||{}, md=d.metadata||{};
+    return `${p.barcode || p.name || "?"}|${md.last_updated || it.received_at || "?"}`;
+  }
+
+  let OPENED_MAP = {};
+  async function apiGetOpened(keys){
+    if(!keys.length) return {};
+    const r = await fetch('/items/opened?keys=' + encodeURIComponent(keys.join(',')), {cache:'no-store'});
+    if(!r.ok) return {};
+    return await r.json();
+  }
+  async function apiSetOpened(key, at){
+    await fetch('/items/opened', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key, opened_at: at || new Date().toISOString()})});
+  }
+  async function apiClearOpened(key){
+    await fetch('/items/opened?key=' + encodeURIComponent(key), {method:'DELETE'});
+  }
+
+  function calcDaysLeft(sl, openedAt){
+    const un=Number(sl?.unopened_days ?? 0), op=Number(sl?.opened_days ?? 0);
+    if(openedAt){
+      const elapsed=Math.floor((Date.now()-openedAt.getTime())/86400000);
+      return op - elapsed;
+    }
+    return un;
+  }
+
+  // data
+  async function loadData2(kind="valid", limit=100){
+    const url=`/logs/${kind}?limit=${limit}&t=${Date.now()}`;
+    const r=await fetch(url, {cache:"no-store", headers:{Accept:"application/json"}});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const data=await r.json();
+    if(Array.isArray(data)) return {total:data.length, items:data};
+    if(data && Array.isArray(data.items)) return {total:(data.total ?? data.items.length), items:data.items};
+    return {total:0, items:[]};
+  }
+
+  function renderValid(items){
+    const tbody=document.getElementById("tbody"); tbody.innerHTML="";
+    const list=uniqItems(items);
+    list.sort((a,b)=> new Date(b.received_at)-new Date(a.received_at));
+
+    for(const it of list){
+      const d=it.data||{}, p=d.product||{}, sl=d.shelf_life||{}, st=d.status||{}, md=d.metadata||{};
+      const key=itemKey(it);
+      const openedAt = OPENED_MAP[key] ? new Date(OPENED_MAP[key]) : null;
+      const days = calcDaysLeft(sl, openedAt);
+      const band=bandFromDaysLeft(days), pct=pctFromDaysLeft(days);
+
+      const tr=document.createElement("tr");
+
+      const tdTime=document.createElement("td");
+      tdTime.innerHTML = `<div class="flex-col"><div class="mono">${fmtDate(it.received_at)}</div></div>`;
+      tr.appendChild(tdTime);
+
+      const tdProd=document.createElement("td");
+      tdProd.innerHTML = `
+        <div class="flex-col">
+          <div><strong>${fmt(p.name)}</strong></div>
+          <div class="small">Barkod: ${fmt(p.barcode)}</div>
+          <div class="small">${tCategoryHR(p.category)}</div>
+        </div>`;
+      tr.appendChild(tdProd);
+
+      const tdLife=document.createElement("td");
+      tdLife.innerHTML = `
+        <div class="flex-col">
+          <div>neotvoren: <strong>${fmt(sl.unopened_days)} d</strong></div>
+          <div>otvoren: ${fmt(sl.opened_days)} d</div>
+          <div>status: ${ openedAt
+            ? `otvoreno: ${fmtDate(openedAt.toISOString())} <span class="small muted">(${relTime(openedAt.toISOString())})</span>`
+            : "neotvoreno"
+          }</div>
+          <div>temp.: ${tTempHR(sl.storage_temp)}</div>
+          <div>
+            <button class="btn" style="padding:4px 8px;font-size:12px"
+                    data-act="${openedAt ? "close" : "open"}"
+                    data-key="${key}">
+              ${openedAt ? "Ukloni oznaku 'otvoreno'" : "Označi kao otvoreno (danas)"}
+            </button>
+          </div>
+        </div>`;
+      tr.appendChild(tdLife);
+
+      const tdStatus=document.createElement("td");
+      tdStatus.innerHTML = `
+        <div class="flex-col">
+          <div>pouzdanost: ${fmtPct(st.confidence)}</div>
+          <div>sigurno za konzumiranje: ${tBoolHR(st.safe_to_consume)}</div>
+          <div class="small">razlozi: ${(st.reason_codes||[]).map(tReasonHR).join(", ")}</div>
+        </div>`;
+      tr.appendChild(tdStatus);
+
+      const tdQual=document.createElement("td"); tdQual.className="right";
+      tdQual.innerHTML = `
+        <div class="flex-col" style="align-items:flex-end">
+          <div><span class="badge ${band.cls}">${pct}% • ${band.label}</span></div>
+          <div class="small">prema neotvorenim/otvorenim danima</div>
+        </div>`;
+      tr.appendChild(tdQual);
+
+      const tdMeta=document.createElement("td");
+      tdMeta.innerHTML = `
+        <div class="flex-col">
+          <div class="small">ažurirano: ${fmtDate(md.last_updated || it.received_at)} <span class="muted">(${relTime(md.last_updated || it.received_at)})</span></div>
+          <div class="small">izvor: ${ ((md.source||"").toLowerCase()==="llm") ? "AI" : (md.source||"") }</div>
+        </div>`;
+      tr.appendChild(tdMeta);
+
+      tbody.appendChild(tr);
+    }
+
+    if(!list.length){
+      const tr=document.createElement("tr");
+      tr.innerHTML=`<td colspan="6" class="center muted">Nema podataka.</td>`;
+      document.getElementById("tbody").appendChild(tr);
+    }
+  }
+
+  function renderInvalid(items){
+    const tbody=document.getElementById("tbody"); tbody.innerHTML="";
+    for(const it of items){
+      const tr=document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${fmtDate(it.received_at)}</td>
+        <td colspan="4">
+          <div class="badge b-red">neispravno</div>
+          <div class="small" style="margin-top:6px; color:#fca5a5">${fmt(it.error)}</div>
+        </td>
+        <td><pre class="small" style="white-space:pre-wrap; color:#9ca3af; margin:0">${fmt(it.raw_preview)}</pre></td>`;
+      tbody.appendChild(tr);
+    }
+    if(!items.length){
+      const tr=document.createElement("tr");
+      tr.innerHTML=`<td colspan="6" class="center muted">Nema neispravnih zapisa.</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function refresh(){
+    const counts=document.getElementById("counts");
+    const tbody=document.getElementById("tbody");
+    const kind=document.getElementById("typeSel").value;
+    const limit=Number(document.getElementById("limitInp").value||100);
+    counts.textContent="Osvježavam…";
+    tbody.innerHTML=`<tr><td colspan="6" class="center muted">Učitavam…</td></tr>`;
+    try{
+      const data = await loadData2(kind, limit);
+      const items = data.items || [];
+      const list  = uniqItems(items);
+      const keys  = list.map(itemKey);
+      OPENED_MAP  = await apiGetOpened(keys);
+      counts.textContent = `Ukupno: ${data.total} | Prikazano: ${list.length} (${kind})`;
+      if(kind==="valid") renderValid(list); else renderInvalid(items);
+    }catch(e){
+      counts.textContent="Greška: " + e.message;
+      tbody.innerHTML=`<tr><td colspan="6" class="center" style="color:#ef4444">Error: ${e}</td></tr>`;
+    }
+  }
+
+  // Delegacija klikova (TEST + tablica)
+  document.addEventListener("click", async (e)=>{
+    const btn = e.target.closest("button[data-act][data-key]"); if(!btn) return;
+    const key = btn.getAttribute("data-key"); const act = btn.getAttribute("data-act");
+    try{
+      if(act==="open") await apiSetOpened(key);
+      else if(act==="close") await apiClearOpened(key);
+    }catch{}
+    refresh();
+  });
+
+  document.addEventListener("DOMContentLoaded", ()=>{
+    document.getElementById("refreshBtn")?.addEventListener("click", refresh);
+    refresh();
+  });
+</script>
+</body>
+</html>
+
