@@ -373,3 +373,102 @@ app.delete("/items/opened", (req, res) => {
 
 
 
+/* ====== API: product lookup, OCR date, save scan ====== */
+
+/* 1) Proizvod po barkodu – OpenFoodFacts */
+app.get('/api/product/:barcode', async (req, res) => {
+  try {
+    const bc = String(req.params.barcode || '').trim();
+    if (!bc) return res.status(400).json({ error: 'barcode required' });
+    const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(bc)}.json`;
+    const r = await fetch(url, { headers: { 'User-Agent': 'ai-shelf-life-app/0.1 (+local)' } });
+    if (!r.ok) return res.json({ name: null });
+    const j = await r.json();
+    const p = j?.product || {};
+    const name = p.product_name || p.generic_name || null;
+    const brand = (Array.isArray(p.brands_tags) && p.brands_tags[0]) || p.brands || null;
+    res.json({ name, brand });
+  } catch (e) {
+    console.error('product lookup error', e);
+    res.json({ name: null });
+  }
+});
+
+/* 2) OCR datuma – Tesseract.js + heuristike */
+var Tesseract = globalThis.__tesseract || (globalThis.__tesseract = require('tesseract.js'));
+
+function parseDatesHeuristic(rawText){
+  let t = (rawText || '').replace(/\s+/g,' ').trim();
+  const upper = t.toUpperCase();
+  const MONTHS = {
+    JAN:1,FEB:2,MAR:3,APR:4,MAY:5,JUN:6,JUL:7,AUG:8,SEP:9,OCT:10,NOV:11,DEC:12,
+    SIJ:1, VELJ:2, OŽU:3, OZU:3, TRA:4, SVI:5, LIP:6, SRP:7, KOL:8, RUJ:9, LIS:10, STU:11, PRO:12
+  };
+  const reISO   = /\b(20[2-4]\d)[.\-\/](0?[1-9]|1[0-2])[.\-\/](0?[1-9]|[12]\d|3[01])\b/g;
+  const reEU    = /\b(0?[1-9]|[12]\d|3[01])[.\-\/](0?[1-9]|1[0-2])[.\-\/]((?:20)?\d{2})\b/g;
+  const reText1 = new RegExp(`\\b(0?[1-9]|[12]\\d|3[01])\\s*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SIJ|VELJ|OŽU|OZU|TRA|SVI|LIP|SRP|KOL|RUJ|LIS|STU|PRO)[\\s.,-]*(\\d{2,4})\\b`,'g');
+  const reText2 = new RegExp(`\\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SIJ|VELJ|OŽU|OZU|TRA|SVI|LIP|SRP|KOL|RUJ|LIS|STU|PRO)[\\s.,-]*(0?[1-9]|[12]\\d|3[01])[\\s.,-]*(\\d{2,4})\\b`,'g');
+  const KEYS = ['BEST BEFORE','USE BY','EXP','BBE','MHD','UPOTRIJEBITI DO','NAJBOLJE','ROK','ISTJEČE',' DO '];
+
+  function windowScore(idx){
+    const w = 20;
+    const seg = upper.slice(Math.max(0, idx - w), Math.min(upper.length, idx + w));
+    let s = 0; for (const k of KEYS) if (seg.includes(k)) s += 10; return s;
+  }
+  function makeISO(y,m,d){
+    const iso = new Date(Date.UTC(Number(y), Number(m)-1, Number(d)));
+    if (isNaN(iso.getTime())) return null;
+    return iso.toISOString().slice(0,10);
+  }
+  const candidates = [];
+  function addCand(raw, y,m,d, idx){
+    const iso = makeISO(y,m,d); if (!iso) return;
+    const today = new Date(); const dt = new Date(iso);
+    let score = 0;
+    const diffDays = Math.round((dt - today)/86400000);
+    if (diffDays < -1) score -= 20;
+    if (diffDays >= 0 && diffDays <= 730) score += 20;
+    score += windowScore(idx);
+    if (/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(raw)) score += 2;
+    candidates.push({ raw, iso, score });
+  }
+  for (const m of upper.matchAll(reISO))  { const [raw,Y,M,D] = m; addCand(raw, Y,M,D, m.index||0); }
+  for (const m of upper.matchAll(reEU))   { const [raw,D,M,Y] = m; const year=(String(Y).length===2)?(Number(Y)+2000):Number(Y); addCand(raw, year,M,D, m.index||0); }
+  for (const m of upper.matchAll(reText1)){ const [raw,D,MON,Y]=m; const MM=MONTHS[MON]||0; const year=(String(Y).length===2)?(Number(Y)+2000):Number(Y); if(MM) addCand(raw, year,MM,D, m.index||0); }
+  for (const m of upper.matchAll(reText2)){ const [raw,MON,D,Y]=m; const MM=MONTHS[MON]||0; const year=(String(Y).length===2)?(Number(Y)+2000):Number(Y); if(MM) addCand(raw, year,MM,D, m.index||0); }
+  candidates.sort((a,b)=> b.score - a.score);
+  return { candidates, best: candidates[0] || null, text: rawText };
+}
+
+app.post('/api/ocr-date', async (req, res) => {
+  try {
+    const dataURL = String(req.body?.imageData || '');
+    if (!dataURL.startsWith('data:image/')) return res.status(400).json({ error: 'imageData dataURL required' });
+    const b64 = dataURL.split(',')[1];
+    const buf = Buffer.from(b64, 'base64');
+    const result = await Tesseract.recognize(buf, 'eng', {}); // kasnije: 'eng+hrv'
+    const text = result?.data?.text || '';
+    const parsed = parseDatesHeuristic(text);
+    res.json(parsed);
+  } catch (e) {
+    console.error('ocr error', e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/* 3) Spremi sken u JSONL (bez slike, po defaultu) */
+const SCANS_FILE = path.join(__dirname, "data", "scans.jsonl");
+function appendJSONL(file, obj){
+  try{
+    fs.mkdirSync(path.dirname(file), { recursive:true });
+    fs.appendFileSync(file, JSON.stringify(obj) + "\n");
+  }catch(e){ console.error('appendJSONL error', e); }
+}
+app.post('/api/scan/save', (req, res) => {
+  const { barcode, product, expiry, ocr_raw, imageData } = req.body || {};
+  const rec = { ts: new Date().toISOString(), barcode, product, expiry, ocr_raw, hasImage: !!imageData };
+  appendJSONL(SCANS_FILE, rec);
+  res.json({ ok:true });
+});
+
+/* ====== /API END ====== */
