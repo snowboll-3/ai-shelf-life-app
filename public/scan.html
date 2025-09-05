@@ -3,27 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AI Shelf-Life – Skeniranje</title>
+  <title>AI Shelf-Life – Skeniranje (bez kamere)</title>
   <style>
-    :root{--bg:#0b1220;--card:#111827;--text:#e5e7eb;--muted:#9ca3af;--accent:#16a34a}
+    :root{--bg:#0b1220;--card:#111827;--text:#e5e7eb;--muted:#9ca3af}
     body{margin:0;font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--text)}
     header{padding:16px;border-bottom:1px solid #1f2937;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
     h1{margin:0;font-size:18px}
-    main{padding:16px;display:grid;gap:16px}
+    main{padding:16px;display:grid;gap:16px;max-width:960px;margin:0 auto}
     .card{background:var(--card);border-radius:12px;padding:12px}
     .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .btn{padding:8px 12px;border:1px solid #374151;border-radius:8px;background:#0f172a;color:#e5e7eb;cursor:pointer}
     .btn:hover{background:#0b1328}
-    video{width:100%;max-height:60vh;background:#000;border-radius:12px}
-    canvas{max-width:100%;border-radius:8px}
+    input{background:#0f172a;border:1px solid #374151;color:#e5e7eb;border-radius:8px;padding:6px 8px}
     .kv{display:grid;grid-template-columns:140px 1fr;gap:6px 10px}
     .muted{color:var(--muted)}
-    input,select{background:#0f172a;border:1px solid #374151;color:#e5e7eb;border-radius:8px;padding:6px 8px}
-    .ok{color:#10b981}.warn{color:#f59e0b}.bad{color:#ef4444}
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    canvas{max-width:100%;border-radius:8px}
+    .small{font-size:12px}
   </style>
-  <!-- ZXing za barkod (CDN) -->
-  <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 </head>
 <body>
   <header>
@@ -33,16 +30,24 @@
   </header>
 
   <main>
+    <!-- BLOK A: BEZ KAMERE (ručni barkod + OCR iz slike) -->
     <section class="card">
       <div class="row">
-        <button id="startBtn" class="btn">▶️ Pokreni kameru</button>
-        <button id="stopBtn" class="btn">⏹️ Zaustavi</button>
-        <button id="snapBtn" class="btn">📸 Snimi kadar (za datum)</button>
+        <label for="manualCode" class="muted">Manualni barkod:</label>
+        <input id="manualCode" placeholder="npr. 3850123456789" style="min-width:220px">
+        <button id="setCodeBtn" class="btn">✅ Postavi barkod</button>
+        <span class="muted small">— koristi jer nemaš kameru</span>
       </div>
-      <video id="preview" playsinline muted></video>
-      <div class="muted small">Savjet: približi kod i osvjetli etiketu za bolji OCR.</div>
+      <div class="row" style="margin-top:8px">
+        <label for="fileInp" class="muted">Učitaj sliku (OCR):</label>
+        <input id="fileInp" type="file" accept="image/*">
+        <button id="ocrFileBtn" class="btn">🧠 OCR iz slike</button>
+        <span class="muted small">— odaberi JPG/PNG etikete s datumom</span>
+      </div>
+      <div class="row" style="margin-top:8px"><label class="muted">Pretprocesiranje:</label><label><input id="bwChk" type="checkbox"> ⚫⚪ Pojačaj datum (B/W)</label><span class="muted small">— koristi ako je datum slabo čitljiv</span></div>
     </section>
 
+    <!-- BLOK B: REZULTATI -->
     <section class="card">
       <h3 style="margin:0 0 8px 0">Rezultati</h3>
       <div class="kv">
@@ -58,99 +63,198 @@
   </main>
 
 <script>
-const video = document.getElementById('preview');
-const shot  = document.getElementById('shot');
+const shot      = document.getElementById('shot');
 const barcodeEl = document.getElementById('barcode');
 const productEl = document.getElementById('product');
 const expiryEl  = document.getElementById('expiry');
 const confEl    = document.getElementById('conf');
 
-let codeReader = null;
-let stopFn = null;
 let lastBarcode = null;
 let lastProduct = null;
 
-function drawSnapshot(scale=1){
-  const w = video.videoWidth || 0, h = video.videoHeight || 0;
-  if (!w || !h) return null;
-  let targetW = Math.round(w*scale), targetH = Math.round(h*scale);
-  targetW = Math.max(320, targetW); targetH = Math.max(240, targetH);
-  shot.width = targetW; shot.height = targetH;
+function drawToCanvas(img, opts={}){
+  const maxW = 900, maxH = 700;
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  if (!iw || !ih) return null;
+
+  const r = Math.min(1, maxW/iw, maxH/ih);
+  const w = Math.round(iw*r), h = Math.round(ih*r);
+  shot.width = w; shot.height = h;
   const ctx = shot.getContext('2d');
-  ctx.drawImage(video, 0, 0, targetW, targetH);
-  return shot.toDataURL('image/jpeg', 0.85);
+  ctx.drawImage(img, 0, 0, w, h);
+
+  // Ako nije traženo B/W, vrati samo smanjenu JPEG sliku
+  if (!opts.bw) return shot.toDataURL('image/jpeg', 0.7);
+
+  // --- B/W PRE-PROCESS (Otsu + fallback) ---
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+  const hist = new Array(256).fill(0);
+  const gray = new Uint8Array(w*h);
+
+  // grayscale i histogram
+  for (let i=0, p=0; i<data.length; i+=4, p++){
+    const g = Math.round(0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2]);
+    gray[p] = g; hist[g]++;
+  }
+
+  // Otsu threshold
+  const total = w*h;
+  let sum = 0;
+  for (let t=0; t<256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, wF = 0;
+  let varMax = -1, thresh = 128;
+  for (let t=0; t<256; t++){
+    wB += hist[t];
+    if (wB === 0) continue;
+    wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const varBetween = wB * wF * (mB - mF) * (mB - mF);
+    if (varBetween > varMax){ varMax = varBetween; thresh = t; }
+  }
+
+  // binarizacija + brojanje
+  let blacks = 0, whites = 0;
+  for (let p=0, i=0; p<gray.length; p++, i+=4){
+    const bw = (gray[p] >= thresh) ? 255 : 0;
+    if (bw === 0) blacks++; else whites++;
+    data[i] = data[i+1] = data[i+2] = bw; // alfa ostaje
+  }
+
+  // Ako "pocrni" ili "pobijeli" previše, fallback: auto-contrast grayscale (bez thresholda)
+  const ratioBlack = blacks/total, ratioWhite = whites/total;
+  if (ratioBlack > 0.98 || ratioWhite > 0.98){
+    // auto-contrast: klip 1% na oba kraja
+    const clip = Math.max(1, Math.floor(total*0.01));
+    let acc = 0, lo = 0, hi = 255;
+    for (let i=0; i<256; i++){ acc += hist[i]; if (acc >= clip){ lo = i; break; } }
+    acc = 0;
+    for (let i=255; i>=0; i--){ acc += hist[i]; if (acc >= clip){ hi = i; break; } }
+    const span = Math.max(1, hi - lo);
+    for (let p=0, i=0; p<gray.length; p++, i+=4){
+      let g = (gray[p] - lo) * 255 / span;
+      if (g < 0) g = 0; else if (g > 255) g = 255;
+      data[i] = data[i+1] = data[i+2] = g;
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  return shot.toDataURL('image/jpeg', 0.7);
 }
 
-async function startCamera(){
+async function postJSON(url, body){
+  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
+  const out = { status: r.status, ok: r.ok, json: null };
+  try { out.json = await r.json(); } catch { out.json = { error:'parse' }; }
+  return out;
+}
+async function ocrDateAuto(imageData){
   try{
-    codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
-    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-    const deviceId = devices?.[0]?.deviceId || undefined;
-
-    await codeReader.decodeFromVideoDevice(deviceId, video, (result, err) => {
-      if (result) onBarcode(result.getText());
-    });
-    stopFn = async ()=>{ try{ await codeReader.reset(); }catch{} };
-  }catch(e){ alert('Greška kamere: '+e.message); }
+    const v2 = await postJSON('/api/ocr-date2', { imageData });
+    if (v2.ok) return v2.json;
+    if (v2.status !== 503) console.warn('ocr v2 fail', v2);
+  }catch(e){ console.warn('ocr v2 error', e); }
+  const v1 = await postJSON('/api/ocr-date', { imageData });
+  if (!v1.ok) throw new Error('OCR failed (v1): ' + (v1.status||'?'));
+  return v1.json;
 }
-async function stopCamera(){ try{ if(stopFn) await stopFn(); }catch{} try{ if(codeReader) await codeReader.reset(); }catch{} stopFn=null; }
 
 async function onBarcode(code){
-  if (code === lastBarcode) return; // izbjegni dupli spam
+  if (!code || code === lastBarcode) return;
   lastBarcode = code;
   barcodeEl.textContent = code;
-
-  // Dohvati artikal po barkodu (preko backenda)
   try{
     const r = await fetch('/api/product/'+encodeURIComponent(code));
     const p = r.ok ? await r.json() : null;
     lastProduct = p?.name ? (p.name + (p.brand ? ` (${p.brand})` : '')) : 'Nepoznato';
     productEl.textContent = lastProduct;
   }catch{ lastProduct='Nepoznato'; productEl.textContent='Nepoznato'; }
-
-  // Automatski snimi kadar i OCR + spremi
-  await snapAndOCR(true);
 }
 
-async function snapAndOCR(auto=false){
-  const dataURL = drawSnapshot(0.7);
-  if (!dataURL){ expiryEl.textContent = 'Nije uspjelo snimanje'; return; }
+async function runOCRFromDataURL(dataURL){
   expiryEl.textContent = 'Čitam…'; confEl.textContent = '—';
-
   try{
-    const r = await fetch('/api/ocr-date', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ imageData: dataURL }) });
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const j = await r.json();
-    let bestIso = null, bestRaw = null, score = 0;
+    const j = await ocrDateAuto(dataURL);
+    let bestIso=null,bestRaw=null,score=0;
     if (j?.best?.iso){ bestIso=j.best.iso; bestRaw=j.best.raw; score = j.best.score ?? 0; }
     expiryEl.innerHTML = bestIso ? `${bestIso} <span class="muted">(“${bestRaw}”)</span>` : 'Nije nađen jasan datum';
-    confEl.textContent = score.toFixed(1);
+    confEl.textContent = (score ?? 0).toFixed(1);
 
-    // Auto-spremi sken (bez slike radi veličine)
-    await fetch('/api/scan/save', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        barcode: lastBarcode,
-        product: lastProduct,
-        expiry: bestIso,
-        ocr_raw: bestRaw
-        // imageData: dataURL, // uključi ako želiš spremati i sličicu
-      })
+    fetch('/api/scan/save', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ barcode: lastBarcode, product: lastProduct, expiry: bestIso, ocr_raw: bestRaw })
     }).catch(()=>{});
   }catch(e){
-    expiryEl.textContent = 'Greška: '+e.message;
+    expiryEl.textContent = 'Greška OCR: '+e.message;
     confEl.textContent = '—';
   }
 }
 
-// UI
-document.getElementById('startBtn').addEventListener('click', startCamera);
-document.getElementById('stopBtn').addEventListener('click', stopCamera);
-document.getElementById('snapBtn').addEventListener('click', ()=>snapAndOCR(false));
+document.getElementById('setCodeBtn').addEventListener('click', async ()=>{
+  const v = document.getElementById('manualCode').value.trim();
+  if (!v){ alert('Upiši barkod'); return; }
+  await onBarcode(v);
+});
 
-// auto-start
-startCamera();
+document.getElementById('ocrFileBtn').addEventListener('click', async ()=>{
+  const finp = document.getElementById('fileInp');
+  const f = finp.files && finp.files[0];
+  if (!f){ alert('Odaberi sliku (JPG/PNG/WebP)'); return; }
+
+  const name = (f.name||'').toLowerCase();
+  const type = f.type||'';
+
+  // Blokiraj ne-image formate i najčešći problem: HEIC/PDF
+  if (!type.startsWith('image/') || name.endsWith('.heic') || name.endsWith('.heif') || name.endsWith('.pdf')) {
+    alert('Nepodržan format. Koristi JPG/PNG/WebP (ne HEIC/PDF).');
+    return;
+  }
+
+  const img = new Image();
+
+  img.onload = async ()=>{
+    try{
+      const dataURL = drawToCanvas(img, { bw: document.getElementById("bwChk")?.checked });
+      if (!dataURL){ expiryEl.textContent = 'Nije uspjelo crtanje slike'; return; }
+      await runOCRFromDataURL(dataURL);
+    } finally {
+      try{ URL.revokeObjectURL(img.src); }catch{}
+    }
+  };
+
+  img.onerror = async ()=>{
+    // Fallback: učitaj kao DataURL preko FileReadera
+    try{
+      const fr = new FileReader();
+      fr.onload = async e=>{
+        try{
+          const dataURL = e.target.result;
+          await runOCRFromDataURL(dataURL);
+        }catch(err){
+          alert('Greška OCR: '+err.message);
+        }
+      };
+      fr.onerror = ()=> alert('Ne mogu učitati sliku (FileReader).');
+      fr.readAsDataURL(f);
+    } catch {
+      alert('Ne mogu učitati sliku.');
+    }
+  };
+
+  // Primarni pokušaj: ObjectURL
+  try{
+    img.src = URL.createObjectURL(f);
+  }catch{
+    img.onerror(); // odmah probaj fallback
+  }
+});
 </script>
 </body>
 </html>
+
+
+
+

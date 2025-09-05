@@ -7,8 +7,8 @@ const app = express();
 
 app.get('/dashboard.html', (req,res)=>res.redirect(301,'/dashboard.hr.html'));
 app.get('/dashboard', (req,res)=>res.redirect(301,'/dashboard.hr.html'));
-app.use(express.json());app.use(express.static(path.join(__dirname, "public")));
-app.use(express.text({ type: "*/*", limit: "1mb" }));
+app.use(express.json({ limit: '8mb' }));app.use(express.static(path.join(__dirname, "public")));
+app.use(express.text({ type: 'text/plain', limit: '1mb' }));
 
 // --- utils ---
 const stripBom = (s) => s.replace(/^\uFEFF/, "");
@@ -472,3 +472,4 @@ app.post('/api/scan/save', (req, res) => {
 });
 
 /* ====== /API END ====== */
+
