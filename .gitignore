@@ -1,43 +1,4 @@
 ﻿node_modules/
-.env
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-*.pid
-*.seed
-*.pid.lock
-# naše lokalne rezultate po želji:
-valid_results.jsonl
-invalid_results.jsonl
-# node / build
-node_modules/
-dist/
-build/
-npm-debug.log*
-
-# OS/editor
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# local app data
-data/*.json
-data/*.jsonl
-data/opened.json
-
-# temp / served dumps
-__served_*.html
-public/ALIVE.txt
-
-# backups
-*.bak
-*.bak*
-# Local backups
-__backup/
-
-# Tesseract OCR data (ne gurati u repo)
-eng.traineddata
-*.traineddata
+*.zip
+server3040.out
+server3040.err
