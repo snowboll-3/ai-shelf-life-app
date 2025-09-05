@@ -35,3 +35,9 @@ public/ALIVE.txt
 # backups
 *.bak
 *.bak*
+# Local backups
+__backup/
+
+# Tesseract OCR data (ne gurati u repo)
+eng.traineddata
+*.traineddata
