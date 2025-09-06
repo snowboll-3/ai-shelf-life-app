@@ -57,6 +57,7 @@ function verifyToken(tok){ try { return jwt.verify(tok, SECRET, { algorithms: ["
 
 // ----- app -----
 const app = express();
+app.use('/public', express.static(__dirname + '/public'));
 app.disable("x-powered-by");
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -191,4 +192,5 @@ app.post('/api/ocr', express.json({ limit: '12mb' }), async (req, res) => {
   }
 });
 app.listen(PORT, ()=> console.log(`✅ Server on http://127.0.0.1:${PORT}`));
+
 
