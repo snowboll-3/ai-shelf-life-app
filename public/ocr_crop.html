@@ -1,0 +1,150 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OCR – Crop & Preprocess (→ /api/ocr-date2)</title>
+<style>
+body{font-family:system-ui;margin:16px}
+label,button{display:inline-block;margin:8px 6px 8px 0}
+canvas{max-width:95vw;border:1px solid #e5e7eb;border-radius:8px}
+pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;margin-top:12px}
+#box{outline:2px dashed #0ea5e9; position:absolute; pointer-events:none; display:none}
+.tools{margin:8px 0}
+</style>
+<h1>OCR – Crop & Preprocess</h1>
+<div class="tools">
+  <input id="f" type="file" accept="image/*,.heic,application/pdf">
+  <label>Max širina: <input id="maxw" type="number" value="1600" min="600" max="3000" style="width:90px"></label>
+  <label><input id="showproc" type="checkbox"> Prikaži procesiranu sliku</label>
+  <button id="ocr">OCR selekcije</button>
+</div>
+<div style="position:relative;display:inline-block">
+  <canvas id="cv"></canvas>
+  <div id="box"></div>
+</div>
+<pre id="out">1) Učitaj sliku • 2) Mišem označi pravokutnik oko datuma • 3) Klikni "OCR selekcije"</pre>
+<script>
+const API="/api"; // na našem 3035 serveru (proxy/bridge)
+const $=id=>document.getElementById(id);
+let img=null, sel=null, scale=1;
+
+function loadImage(file){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(file);});}
+function drawImage(i){
+  const maxW = parseInt($("maxw").value||"1600",10);
+  const sc = Math.min(1, maxW/Math.max(i.naturalWidth,i.naturalHeight));
+  const w = Math.round(i.naturalWidth*sc), h = Math.round(i.naturalHeight*sc);
+  const cv=$("cv"); cv.width=w; cv.height=h;
+  const ctx=cv.getContext("2d"); ctx.clearRect(0,0,w,h); ctx.drawImage(i,0,0,w,h);
+  scale = 1/sc; // za mapiranje natrag na izvor
+}
+
+$("f").onchange=async(e)=>{
+  const f=e.target.files[0]; if(!f) return;
+  img = await loadImage(f);
+  drawImage(img);
+  $("out").textContent="Slika učitana. Označi pravokutnik oko datuma mišem.";
+};
+
+(function enableSelect(){
+  const cv=$("cv"), box=$("box");
+  let sx=0,sy=0,drag=false;
+  const pos = ev => {
+    const r=cv.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(cv.width,  ev.clientX - r.left)),
+             y: Math.max(0, Math.min(cv.height, ev.clientY - r.top)) };
+  };
+  cv.addEventListener("mousedown", ev=>{
+    if(!img) return; drag=true; const p=pos(ev); sx=p.x; sy=p.y; sel=null;
+    box.style.display="block"; box.style.left=sx+"px"; box.style.top=sy+"px"; box.style.width="0px"; box.style.height="0px";
+  });
+  cv.addEventListener("mousemove", ev=>{
+    if(!drag) return; const p=pos(ev);
+    const x=Math.min(sx,p.x), y=Math.min(sy,p.y), w=Math.abs(p.x-sx), h=Math.abs(p.y-sy);
+    box.style.left=x+"px"; box.style.top=y+"px"; box.style.width=w+"px"; box.style.height=h+"px";
+  });
+  window.addEventListener("mouseup", ev=>{
+    if(!drag) return; drag=false;
+    const r=box.getBoundingClientRect(), cvr=cv.getBoundingClientRect();
+    const x=r.left-cvr.left, y=r.top-cvr.top, w=r.width, h=r.height;
+    if(w<5||h<5){ box.style.display="none"; sel=null; return; }
+    sel={x:Math.round(x), y:Math.round(y), w:Math.round(w), h:Math.round(h)};
+  });
+})();
+
+function getCrop(){
+  if(!img || !sel) return null;
+  const sx = Math.round(sel.x*scale), sy=Math.round(sel.y*scale), sw=Math.round(sel.w*scale), sh=Math.round(sel.h*scale);
+  const c=document.createElement("canvas"); c.width=sw; c.height=sh;
+  const ctx=c.getContext("2d"); ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  return c;
+}
+
+function equalizeAndBinarize(c, thr=180, invert=false){
+  const ctx=c.getContext("2d"); const d=ctx.getImageData(0,0,c.width,c.height), p=d.data;
+  // grayscale + kontrast stretch (auto)
+  let min=255, max=0;
+  for(let i=0;i<p.length;i+=4){ const g=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2]; if(g<min)min=g; if(g>max)max=g; }
+  const rng = Math.max(1, max-min);
+  for(let i=0;i<p.length;i+=4){
+    const g=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];
+    const n=(g-min)*255/rng; // stretch
+    let v = n>thr ? 255 : 0;
+    if(invert) v = 255-v;
+    p[i]=p[i+1]=p[i+2]=v; p[i+3]=255;
+  }
+  ctx.putImageData(d,0,0);
+}
+
+function toBlob(canvas, type="image/png", q=0.92){return new Promise(res=>canvas.toBlob(b=>res(b),type,q));}
+
+async function sendToApi(blob, filename){
+  const fd=new FormData(); fd.append("image", blob, filename||"crop.png");
+  // prvo probaj /api/ocr-date2 (proxy do Rendera)
+  const r=await fetch(API + "/ocr-date2", { method:"POST", body:fd });
+  if(r.ok) return await r.json();
+  // fallback -> naš bridge /api/ocr-date (imageData)
+  const b64 = await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(blob); });
+  const r2=await fetch(API + "/ocr-date", { method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({ imageData:b64, filename: filename||"crop.png" }) });
+  return await r2.json();
+}
+
+$("ocr").onclick = async ()=>{
+  if(!sel){ $("out").textContent="Prvo nacrtaj selekciju oko datuma."; return; }
+  const crop = getCrop();
+  // povećaj crop (bolje za OCR)
+  const scaleUp = Math.min(2.0, Math.max(1, 900/Math.max(crop.width,crop.height)));
+  const cw=Math.round(crop.width*scaleUp), ch=Math.round(crop.height*scaleUp);
+  const c2=document.createElement("canvas"); c2.width=cw; c2.height=ch;
+  c2.getContext("2d").imageSmoothingEnabled=false;
+  c2.getContext("2d").drawImage(crop, 0,0,cw,ch);
+
+  const variants = [
+    {thr:160,invert:false},{thr:180,invert:false},{thr:200,invert:false},
+    {thr:180,invert:true}
+  ];
+  $("out").textContent="Preprocessing…";
+  let best=null, bestScore=-1;
+  for(const v of variants){
+    const c3=document.createElement("canvas"); c3.width=cw; c3.height=ch;
+    const ctx=c3.getContext("2d"); ctx.drawImage(c2,0,0,cw,ch);
+    equalizeAndBinarize(c3, v.thr, v.invert);
+    if ($("showproc").checked) { // pokaži procesiranu sliku umjesto originala
+      const ctxDst=$("cv").getContext("2d");
+      ctxDst.clearRect(0,0,$("cv").width,$("cv").height);
+      const fit=Math.min($("cv").width/cw, $("cv").height/ch, 1);
+      const tw=Math.round(cw*fit), th=Math.round(ch*fit);
+      ctxDst.drawImage(c3,0,0,tw,th);
+    }
+    const blob = await toBlob(c3, "image/png", 0.92);
+    const j = await sendToApi(blob, `crop_thr${v.thr}${v.invert?"_inv":""}.png`);
+    const s = Number(j.score||0) || (j.date?1:0);
+    if (s>bestScore){ bestScore=s; best=j; }
+    if (s>=0.95) break;
+  }
+  const j = best || { score:0, date:null, raw:[], text:"" };
+  const lots=(j.lots&&j.lots.length)?("\nLOT: "+j.lots.join(", ")):"";
+  const pat=j.pattern?(" ("+j.pattern+")"):"";
+  $("out").textContent =
+    `score ${Number(j.score||0).toFixed(2)}${pat}\n` +
+    `Detected date: ${j.date||"—"}\n` +
+    `Raw candidates: ${(j.raw&&j.raw.join(", "))||"—"}${lots}\n\n` +
+    `OCR text\n${j.text||""}`;
+};
+</script>

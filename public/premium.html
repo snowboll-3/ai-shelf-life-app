@@ -1,0 +1,123 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Premium – skener datuma</title>
+<style>
+  body{font-family:system-ui;margin:16px}
+  a{color:#0ea5e9;text-decoration:none}
+  .card{border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin:12px 0}
+  pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:12px;margin:12px 0;font-size:15px}
+</style>
+
+<h1>Premium – skener datuma</h1>
+<p><a href="/scan_manual_hr.html">← Ručni (HR)</a> · <a href="/scan_quick.html">OCR</a></p>
+
+<div class="card">
+  <h3>Pretplata</h3>
+  <pre id="out">Učitavam…</pre>
+  <small>Aktivacija se postavlja kad otvoriš Premium link s tokenom. Vrijedi 1 mjesec.</small>
+</div>
+
+<script>
+const out = document.getElementById("out");
+
+function pad(n){return String(n).padStart(2,"0");}
+function fmtTS(dt){ return `${pad(dt.getDate())}/${pad(dt.getMonth()+1)}/${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`; }
+function addOneMonth(dt){
+  const d=new Date(dt.getTime());
+  const day=d.getDate();
+  d.setMonth(d.getMonth()+1);
+  if (d.getDate()<day) d.setDate(0); // zadnji dan mjeseca ako je overflow
+  return d;
+}
+function diffDHMM(a,b){
+  let ms=b-a; if(ms<0) return "0d 00:00";
+  const d=Math.floor(ms/86400000); ms-=d*86400000;
+  const h=Math.floor(ms/3600000);  ms-=h*3600000;
+  const m=Math.floor(ms/60000);
+  return `${d}d ${pad(h)}:${pad(m)}`;
+}
+
+(function init(){
+  const usp=new URLSearchParams(location.search);
+  const hasToken = usp.has("token"); // reset ako dolazi s ?token=
+  let act = localStorage.getItem("premium_activation_at");
+  let exp = localStorage.getItem("premium_expires_at");
+  const now = new Date();
+
+  if (hasToken || !act || !exp){
+    const expires = addOneMonth(now);
+    act = now.toISOString();
+    exp = expires.toISOString();
+    localStorage.setItem("premium_activation_at", act);
+    localStorage.setItem("premium_expires_at",  exp);
+    try { history.replaceState({}, "", "/premium"); } catch(e){}
+  }
+
+  const actDt = new Date(act);
+  const expDt = new Date(exp);
+
+  function render(){
+    const cur = new Date();
+    out.textContent =
+      `Sada: ${fmtTS(cur)}\n` +
+      `Premium vrijedi do: ${fmtTS(expDt)} (preostalo: ${diffDHMM(cur, expDt)})`;
+  }
+  render();
+  setInterval(render, 60*1000);
+})();
+</script>
+
+<!-- PREMIUM_FORCE_STATUS START -->
+<script>
+(() => {
+  // Helperi
+  const pad=n=>String(n).padStart(2,'0');
+  const fmtTS=d=>`${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const addOneMonth = (dt) => {
+    const d=new Date(dt.getTime()); const day=d.getDate();
+    d.setMonth(d.getMonth()+1);
+    if (d.getDate()<day) d.setDate(0);
+    return d;
+  };
+  const diffDHMM=(a,b)=>{
+    let ms=b-a; if(ms<0) return "0d 00:00";
+    const d=Math.floor(ms/86400000); ms-=d*86400000;
+    const h=Math.floor(ms/3600000);  ms-=h*3600000;
+    const m=Math.floor(ms/60000);
+    return `${d}d ${pad(h)}:${pad(m)}`;
+  };
+
+  // Aktivacija iz tokena (ako postoji) ili iz localStorage
+  const usp = new URLSearchParams(location.search);
+  const hasToken = usp.has('token');
+  let act = localStorage.getItem('premium_activation_at');
+  let exp = localStorage.getItem('premium_expires_at');
+  const now = new Date();
+  if (hasToken || !act || !exp){
+    const expires = addOneMonth(now);
+    act = now.toISOString();
+    exp = expires.toISOString();
+    localStorage.setItem('premium_activation_at', act);
+    localStorage.setItem('premium_expires_at',  exp);
+    try { history.replaceState({}, "", "/premium"); } catch(e){}
+  }
+  const actDt = new Date(act);
+  const expDt = new Date(exp);
+
+  // **OVO PREUZIMA CIJELU STRANICU** – prikaz samo statusa pretplate
+  function render(){
+    const cur = new Date();
+    document.body.innerHTML = `
+      <div style="font-family:system-ui;margin:16px">
+        <h1>Premium – status</h1>
+        <pre style="white-space:pre-wrap;border:1px solid #eee;border-radius:12px;padding:12px">
+Sada: ${fmtTS(cur)}
+Premium vrijedi do: ${fmtTS(expDt)} (preostalo: ${diffDHMM(cur, expDt)})</pre>
+        <p><a href="/scan_manual_hr.html">← Ručni (HR)</a> · <a href="/scan_quick.html">OCR</a></p>
+      </div>`;
+  }
+  render();
+  setInterval(render, 60*1000);
+})();
+</script>
+<!-- PREMIUM_FORCE_STATUS END -->
+

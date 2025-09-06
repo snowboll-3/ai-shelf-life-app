@@ -1,10 +1,11 @@
 ﻿const express = require("express");
-const fs = require("fs");
-const path = require("path");
 const { parseAndValidateLLM } = require("./validateShelfLife");
 
 const app = express();
 
+
+// serve static files
+app.use(express.static('public'));
 app.get('/dashboard.html', (req,res)=>res.redirect(301,'/dashboard.hr.html'));
 app.get('/dashboard', (req,res)=>res.redirect(301,'/dashboard.hr.html'));
 app.use(express.json({ limit: '8mb' }));app.use(express.static(path.join(__dirname, "public")));
@@ -581,4 +582,171 @@ try {
 } catch (e) {
   console.error('scan.html route error', e);
 }
+
+
+
+
+//// ==== scan logging routes (auto) ====
+const LOG_DIR = path.join(process.cwd(),'logs');
+const JSONL   = path.join(LOG_DIR,'scans.jsonl');
+const CSVFILE = path.join(LOG_DIR,'scans.csv');
+function csvEscape(v){ if(v==null) return ''; const s=String(v).replace(/\r?\n/g,' ').slice(0,5000); return (/[\",]/.test(s))? '\"'+s.replace(/\"/g,'\"\"')+'\"' : s; }
+
+app.post('/api/scan-log', express.json({limit:'1mb'}), (req,res)=>{
+  try{
+    const b=req.body||{}; const now=new Date().toISOString();
+    const rec = {
+      ts:now, source:b.source||'scan_pwa', barcode:b.barcode||null, product:b.product||null,
+      date:b.date||null, score:(typeof b.score==='number'?b.score:Number(b.score||0)),
+      pattern:b.pattern||null, lots:Array.isArray(b.lots)?b.lots:(b.lots?[String(b.lots)]:[]),
+      raw:Array.isArray(b.raw)?b.raw:(b.raw?[String(b.raw)]:[]), filename:b.filename||null, text:b.text||null
+    };
+    fs.appendFileSync(JSONL, JSON.stringify(rec)+'\n','utf8');
+    const line=[rec.ts,rec.source,rec.barcode,rec.product,rec.date,isNaN(rec.score)?'':rec.score.toFixed(2),rec.pattern||'',(rec.lots||[]).join('|'),(rec.raw||[]).join('|'),rec.filename||'',(rec.text||'').replace(/\r?\n/g,' ').slice(0,5000)]
+      .map(csvEscape).join(',');
+    if (!fs.existsSync(CSVFILE)) fs.writeFileSync(CSVFILE,'ts,source,barcode,product,date,score,pattern,lots,raw,filename,text','utf8');
+    fs.appendFileSync(CSVFILE,'\n'+line,'utf8');
+    res.json({ok:true,saved:true});
+  }catch(e){ res.status(500).json({ok:false,error:String(e&&e.message||e)}); }
+});
+
+app.get('/api/logs/scans.json', (req,res)=>{
+  try{
+    const limit=Math.max(1,Math.min(1000,Number(req.query.limit||200)));
+    if (!fs.existsSync(JSONL)) return res.json([]);
+    const data=fs.readFileSync(JSONL,'utf8').split(/\r?\n/).filter(Boolean);
+    const tail=data.slice(-limit).map(l=>{try{return JSON.parse(l)}catch(_){return null}}).filter(Boolean);
+    res.json(tail);
+  }catch(e){ res.status(500).json({ok:false,error:String(e&&e.message||e)}); }
+});
+
+app.get('/logs/scans.csv', (req,res)=>{
+  try{
+    if (!fs.existsSync(CSVFILE)) return res.status(404).send('no csv');
+    res.set('Content-Type','text/csv; charset=utf-8'); res.set('Cache-Control','no-cache');
+    res.send(fs.readFileSync(CSVFILE,'utf8'));
+  }catch(e){ res.status(500).send('error'); }
+});
+//// ==== end scan logging routes ====
+
+
+//// === INLINE PAGES HOTFIX (when public/*.html missing) ===
+const INLINE_SCAN = <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Shelf-Life – Scan</title>
+<style>body{font-family:system-ui;margin:16px}.row{margin:10px 0}button{padding:10px 14px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer}
+#out{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;margin-top:12px}.muted{color:#6b7280;font-size:12px}
+#cam{width:100%;max-width:440px;display:none;border-radius:8px;border:1px solid #eee}input[type="text"],input[type="file"]{padding:10px 12px;border:1px solid #ddd;border-radius:10px}.flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+</style>
+<h1>AI Shelf-Life – Scan (OCR + Barcode)</h1>
+<p class="muted">Inline verzija (bez PWA). Radi i bez public/*.html. Barcode koristi ZXing CDN.</p>
+<div class="row flex">
+  <input id="file" type="file" accept="image/*,.heic,application/pdf">
+  <button id="run">Run OCR</button>
+</div>
+<div class="row flex">
+  <input id="barcode" type="text" placeholder="Barcode (auto)">
+  <button id="scan">Scan barcode</button>
+  <button id="stop" style="display:none">Stop</button>
+</div>
+<video id="cam" playsinline muted></video>
+<pre id="out">Ready.</pre>
+<script>
+const \$=id=>document.getElementById(id);
+function show(j,src){
+  const lots=(j.lots&&j.lots.length)?"\\nLOT: "+j.lots.join(", "):"";
+  const pat=j.pattern? " ("+j.pattern+")":"";
+  \out.textContent="source "+(src||"?")+
+  "\\nscore "+Number(j.score||0).toFixed(2)+pat+
+  "\\nDetected date: "+(j.date||"—")+
+  "\\nRaw candidates: "+((j.raw&&j.raw.join(", "))||"—")+lots+
+  "\\n\\nOCR text\\n"+(j.text||"");
+  // autolog
+  try{ fetch('/api/scan-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    source: src||'inline', barcode: (\barcode||{}).value||null, date:j.date||null, score:j.score||0,
+    pattern:j.pattern||null, lots:j.lots||[], raw:j.raw||[], text:j.text||null
+  })}); }catch(_){}
+}
+\$ ("run").onclick=async()=>{
+  const f=\file.files[0]; if(!f){ alert("Odaberi datoteku"); return; }
+  \out.textContent="Uploading to /api/ocr-date2…";
+  const fd=new FormData(); fd.append("image",f,f.name);
+  try{
+    const r=await fetch("/api/ocr-date2",{method:"POST",body:fd});
+    if(r.status===503||r.status===404){ const r2=await fetch("/api/ocr-date",{method:"POST"}); show(await r2.json(),"fallback"); return; }
+    show(await r.json(),"server(/api/ocr-date2)");
+  }catch(e){
+    try{ const r2=await fetch("/api/ocr-date",{method:"POST"}); show(await r2.json(),"fallback(catch)"); }
+    catch(_){ \out.textContent="Ne mogu dohvatiti /api/ocr-date2 ni /api/ocr-date."; }
+  }
+};
+</script>
+<script src="https://unpkg.com/@zxing/library@0.21.2/umd/index.min.js"></script>
+<script>
+let codeReader=null,currentDeviceId=null;
+async function startScan(){
+  if(!window.ZXing||!ZXing.BrowserMultiFormatReader){ alert("Barcode lib nije učitana."); return; }
+  \cam.style.display="block"; \scan.style.display="none"; \stop.style.display="inline-block";
+  codeReader=new ZXing.BrowserMultiFormatReader();
+  try{
+    const devices=await ZXing.BrowserCodeReader.listVideoInputDevices();
+    let dev=devices.find(d=>/back|environment/i.test(d.label))||devices[devices.length-1];
+    currentDeviceId=dev?.deviceId;
+    const hints=new Map(); const formats=[ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.UPC_A,ZXing.BarcodeFormat.UPC_E,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.ITF];
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,formats); hints.set(ZXing.DecodeHintType.TRY_HARDER,true); codeReader.hints=hints;
+    await codeReader.decodeFromVideoDevice(currentDeviceId,"cam",(result,err)=>{ if(result&&result.getText){ \barcode.value=result.getText(); stopScan(); } });
+  }catch(e){ alert("Kamera nije dostupna: "+(e?.message||e)); stopScan(); }
+}
+async function stopScan(){ if(codeReader){ try{ await codeReader.reset(); }catch(e){} codeReader=null; } const v=\cam; v.pause?.(); v.srcObject=null; v.style.display="none"; \scan.style.display="inline-block"; \stop.style.display="none"; }
+\scan.onclick=startScan; \stop.onclick=stopScan;
+</script>;
+const INLINE_EGGS = <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Eggs mode – AI Shelf-Life</title>
+<style>:root{--muted:#6b7280}body{font-family:system-ui;margin:16px}.card{background:#f9fafb;padding:14px;border:1px solid #e5e7eb;border-radius:12px}
+.grid{display:grid;gap:12px;grid-template-columns:1fr}@media(min-width:680px){.grid{grid-template-columns:1fr 1fr}}label{font-size:12px;color:var(--muted);margin-bottom:6px;display:block}
+input,button{width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.kpi{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.pill{padding:8px 10px;border-radius:999px;border:1px solid #e5e7eb;background:#fff}.ok{border-color:#bbf7d0;color:#16a34a;background:#f0fdf4}.warn{border-color:#fde68a;color:#d97706;background:#fffbeb}.bad{border-color:#fecaca;color:#dc2626;background:#fef2f2}
+.small{font-size:12px;color:var(--muted)}.list li{border-bottom:1px solid #eee;padding:6px 0}</style>
+<h1>🥚 Eggs mode</h1><p class="small">Bilježi kada su jaja stavljena u frižider i koliko je dana ostalo do roka.</p>
+<div class="card"><div class="grid">
+  <div><label>Stavljena u frižider</label><input id="fridge" type="datetime-local"></div>
+  <div><label>Best before (opcija)</label><input id="bbd" type="date"></div>
+  <div><label>Pack / položena (opcija)</label><input id="pack" type="date"></div>
+  <div><label>Prozor bez BBD/pack (dana)</label><input id="window" type="number" value="21" min="7" max="60"></div>
+  <div><label>Batch/kod (opcija)</label><input id="code" type="text" placeholder="npr. 1HR1234…"></div>
+  <div><label>Količina (opcija)</label><input id="qty" type="number" value="10" min="1" step="1"></div>
+</div>
+<div class="kpi" id="kpi"></div>
+<div style="display:flex;gap:8px;margin-top:8px"><button id="save">Spremi batch</button><button id="reset">Reset</button></div>
+<p class="small">Napomena: informativno; držati jaja stalno ohlađena.</p></div>
+<h3 style="margin-top:16px">Zadnji batch-evi</h3><ul id="list" class="list"></ul>
+<script>
+const \$=id=>document.getElementById(id), pad=n=>String(n).padStart(2,'0'), toISO=d=>\\-\-\\;
+const addDays=(d,x)=>{const t=new Date(d);t.setDate(t.getDate()+x);return t}, diff=(a,b)=>Math.floor((a-b)/(24*3600*1000));
+function estimate(){ const now=new Date(); const fridge=new Date(\fridge.value||now.toISOString().slice(0,16));
+  const bbd=\bbd.value?new Date(\bbd.value+"T23:59:59"):null; const pack=\pack.value?new Date(\pack.value+"T12:00:00"):null; const win=parseInt(\window.value||'21',10);
+  let est,reason; if(bbd){ est=bbd; reason="BBD s kutije"; } else if(pack){ est=addDays(pack,28); reason="pack +28 dana"; } else { est=addDays(fridge,win); reason=\ridge +\ dana\; }
+  const left=diff(est,new Date()), cls=left>=7?"ok":(left>=0?"warn":"bad");
+  \kpi.innerHTML=\<span class="pill \">Procijenjeni rok: <b>\</b> <span class="small">(\)</span></span><span class="pill \">Preostalo: <b>\</b> d</span>\;
+  return {est,left,reason,fridge,pack};
+}
+function load(){ const arr=JSON.parse(localStorage.getItem('eggs_batches')||'[]'); \list.innerHTML=arr.slice().reverse().map(x=>\<li><b>\ · \</b><div class="small">Fridge: \ · BBD: \ · Est: \ (\ d)</div></li>\).join('')||'<li class="small">Nema zapisa.</li>'; }
+function save(){ const {est,left}=estimate(); const rec={code:\code.value||null,qty:parseInt(\qty.value||'0',10)||null,fridge:\fridge.value,bbd:\bbd.value||null,pack:\pack.value||null,windowDays:parseInt(\window.value||'21',10),est:toISO(est),left};
+  const arr=JSON.parse(localStorage.getItem('eggs_batches')||'[]'); arr.push(rec); localStorage.setItem('eggs_batches',JSON.stringify(arr)); load();
+  fetch('/api/eggs-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)}).catch(()=>{});
+}
+function reset(){ const now=new Date(); \fridge.value=now.toISOString().slice(0,16); \bbd.value=''; \pack.value=''; \code.value=''; \qty.value='10'; \window.value='21'; estimate(); }
+\fridge.onchange=\bbd.onchange=\pack.onchange=\window.oninput=estimate; \save.onclick=()=>{save();alert('Spremljeno (lokalno).')}; \reset.onclick=reset;
+(function(){ const now=new Date(); \fridge.value=now.toISOString().slice(0,16); estimate(); load(); })();
+</script>;
+const INLINE_LOGS = <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logs – AI Shelf-Life</title>
+<style>body{font-family:system-ui;margin:16px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #eee;padding:6px 8px;font-size:14px;vertical-align:top}th{background:#fafafa}.row{margin:10px 0}</style>
+<h1>Logs</h1><div class="row"><button id="reload">Reload</button> <a href="/logs/scans.csv" download>⬇️ Download CSV</a></div>
+<table id="t"><thead><tr><th>ts</th><th>source</th><th>barcode</th><th>product</th><th>date</th><th>score</th><th>pattern</th><th>lots</th><th>raw</th><th>text</th></tr></thead><tbody></tbody></table>
+<script>
+async function load(){ try{ const r=await fetch('/api/logs/scans.json?limit=200'); const arr=await r.json(); const tb=document.querySelector('#t tbody');
+  tb.innerHTML=(arr||[]).reverse().map(x=>\<tr><td>\</td><td>\</td><td>\</td><td>\</td><td>\</td><td>\</td><td>\</td><td>\</td><td>\</td><td>\</td></tr>\).join(''); }catch(e){ alert('Ne mogu dohvatiti /api/logs/scans.json'); } }
+document.getElementById('reload').onclick=load; load();
+</script>;
+app.get('/scan_pwa.html', (req,res)=>res.status(200).type('html').send(INLINE_SCAN));
+app.get('/eggs.html',     (req,res)=>res.status(200).type('html').send(INLINE_EGGS));
+app.get('/logs.html',     (req,res)=>res.status(200).type('html').send(INLINE_LOGS));
+//// === END INLINE PAGES HOTFIX ===
 

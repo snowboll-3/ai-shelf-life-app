@@ -1,0 +1,120 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Shelf-Life – Jaja (praćenje)</title>
+<style>
+  body{font-family:system-ui;margin:16px}
+  .row{margin:10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  input,button,select{padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fff}
+  .primary{background:#0ea5e9;color:#fff;border-color:#0ea5e9}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{border:1px solid #eee;padding:8px;text-align:left}
+  th{background:#f8fafc}
+  .pill{padding:2px 8px;border-radius:999px;display:inline-block}
+  .ok{background:#dcfce7} .warn{background:#fef9c3} .bad{background:#fee2e2}
+  small{color:#6b7280}
+  a{color:#0ea5e9;text-decoration:none}
+</style>
+
+<h1>Jaja – praćenje</h1>
+<p><a href="/scan_manual_hr.html">← Ručni unos</a></p>
+
+<div class="row">
+  <label>Stavljeno u frižider:</label>
+  <input id="date" type="date">
+  <label>Trajanje (dani):</label>
+  <input id="days" type="number" min="1" max="60" value="21" style="width:100px">
+  <label>Količina (opcionalno):</label>
+  <input id="qty" type="number" min="1" max="60" value="10" style="width:100px">
+  <button id="add" class="primary">Dodaj zapis</button>
+  <small>(preporuka: 21 dan u frižideru — podesivo)</small>
+</div>
+
+<table id="tbl">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Stavljeno</th>
+      <th>Trajanje</th>
+      <th>Istječe</th>
+      <th>Preostalo</th>
+      <th>Količina</th>
+      <th>Status</th>
+      <th>Akcije</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+const KEY = "eggs_v1";
+const $ = s=>document.querySelector(s);
+
+function todayISO(){
+  const t = new Date(); const y=t.getFullYear(), m=String(t.getMonth()+1).padStart(2,'0'), d=String(t.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+}
+function addDays(iso, n){
+  const [y,m,d]=iso.split("-").map(Number);
+  const dt = new Date(y, m-1, d+n);
+  return dt.toISOString().slice(0,10);
+}
+function diffDays(a,b){ // b-a (u danima)
+  const da = new Date(a+"T00:00:00Z"), db = new Date(b+"T00:00:00Z");
+  return Math.round((db-da)/86400000);
+}
+function load(){ try{return JSON.parse(localStorage.getItem(KEY)||"[]");}catch(_){return []} }
+function save(arr){ localStorage.setItem(KEY, JSON.stringify(arr)); }
+
+function render(){
+  const data = load();
+  const tb = $("#tbl tbody"); tb.innerHTML = "";
+  const today = todayISO();
+  data.forEach((row, i)=>{
+    const left = diffDays(today, row.expires);
+    let cls = "ok", label="svježe";
+    if (left <= 3 && left >= 0){ cls="warn"; label="uskoro"; }
+    if (left < 0){ cls="bad"; label="isteklo"; }
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td>${row.date}</td>
+      <td>${row.days} dana</td>
+      <td>${row.expires}</td>
+      <td>${left} d</td>
+      <td>${row.qty||''}</td>
+      <td><span class="pill ${cls}">${label}</span></td>
+      <td>
+        <button data-act="used" data-i="${i}">✔ Pojedeno</button>
+        <button data-act="del" data-i="${i}">🗑 Obriši</button>
+      </td>
+    `;
+    tb.appendChild(tr);
+  });
+}
+
+function addRow(){
+  const date = $("#date").value || todayISO();
+  let days = parseInt($("#days").value||"21",10);
+  if (!Number.isFinite(days) || days<1) days = 21;
+  const qty  = parseInt($("#qty").value||"",10);
+  const expires = addDays(date, days);
+  const arr = load();
+  arr.push({date, days, qty: Number.isFinite(qty)?qty:undefined, expires});
+  save(arr);
+  render();
+}
+
+document.addEventListener("click", (e)=>{
+  const b = e.target.closest("button"); if(!b) return;
+  const act = b.dataset.act, i = +b.dataset.i;
+  if (act==="used" || act==="del"){
+    const arr = load();
+    arr.splice(i,1);
+    save(arr);
+    render();
+  }
+});
+
+document.getElementById("add").onclick = addRow;
+document.getElementById("date").value = todayISO();
+render();
+</script>

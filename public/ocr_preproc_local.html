@@ -1,0 +1,81 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OCR preproc (local → 3035 → Render)</title>
+<style>body{font-family:system-ui;margin:16px}input,button{padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fff}pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;margin-top:12px}</style>
+<h1>OCR pre-processing test</h1>
+<input id="f" type="file" accept="image/*,.heic,application/pdf">
+<button id="go">Try OCR (preprocess)</button>
+<pre id="out">Ready.</pre>
+<script>
+const API = "http://127.0.0.1:3035"; // naš safe server
+const $ = id => document.getElementById(id);
+
+function loadImage(file){
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function toBlob(canvas, type="image/png", quality=0.92){
+  return new Promise(res => canvas.toBlob(b => res(b), type, quality));
+}
+async function preprocess(file, rot=0, thr=180, invert=false){
+  const img = await loadImage(file);
+  const max = 1800;
+  let w = img.naturalWidth, h = img.naturalHeight;
+  const sc = Math.min(1, max / Math.max(w, h));
+  w = Math.round(w * sc); h = Math.round(h * sc);
+  const cw = (rot % 180 ? h : w), ch = (rot % 180 ? w : h);
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  const ctx = c.getContext('2d');
+  ctx.save(); ctx.translate(cw/2, ch/2); ctx.rotate(rot * Math.PI/180);
+  ctx.drawImage(img, -w/2, -h/2, w, h); ctx.restore();
+  // grayscale + hard threshold
+  const d = ctx.getImageData(0,0,cw,ch), p = d.data;
+  for (let i=0;i<p.length;i+=4){
+    const g = 0.299*p[i] + 0.587*p[i+1] + 0.114*p[i+2];
+    let v = g > thr ? 255 : 0;
+    if (invert) v = 255 - v;
+    p[i] = p[i+1] = p[i+2] = v; p[i+3]=255;
+  }
+  ctx.putImageData(d,0,0);
+  return await toBlob(c, "image/png");
+}
+async function tryVariant(file, rot, thr, invert){
+  const blob = await preprocess(file, rot, thr, invert);
+  const fd = new FormData();
+  fd.append("image", blob, `proc_r${rot}_t${thr}${invert?"_inv":""}.png`);
+  const r = await fetch(API + "/api/ocr-date2", { method:"POST", body: fd });
+  const text = await r.text();
+  let j = {}; try { j = JSON.parse(text); } catch(_){ j = { ok:false, error:"non-json", rawText:text }; }
+  let s = Number(j.score||0);
+  if (j.date) s = Math.max(s, 0.9); // ako je nađen datum, digni score
+  return { rot, thr, invert, resp:j, score:s };
+}
+document.getElementById('go').onclick = async ()=>{
+  const f = document.getElementById('f').files[0];
+  if (!f) { alert("Odaberi sliku"); return; }
+  const variants = [
+    [0,170,false],[0,190,false],[0,210,false],
+    [90,180,false],[270,180,false],
+    [0,180,true]  // invert varijanta
+  ];
+  $("out").textContent = "preprocess & try…";
+  let best = { score:-1 };
+  for (const [rot,thr,inv] of variants){
+    const r = await tryVariant(f, rot, thr, inv);
+    if (r.score > best.score) best = r;
+    if (r.score >= 0.95) break;
+  }
+  const j = best.resp || {};
+  const lots = (j.lots && j.lots.length) ? ("\nLOT: " + j.lots.join(", ")) : "";
+  const pat  = j.pattern ? (" ("+j.pattern+")") : "";
+  $("out").textContent =
+    `best rot/thr/inv: ${best.rot}/${best.thr}/${best.invert}\n` +
+    `score ${Number(j.score||0).toFixed(2)}${pat}\n` +
+    `Detected date: ${j.date||"—"}\n` +
+    `Raw candidates: ${(j.raw && j.raw.join(", "))||"—"}${lots}\n\n` +
+    `OCR text\n${j.text||""}`;
+};
+</script>

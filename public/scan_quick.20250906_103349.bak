@@ -1,0 +1,126 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Shelf-Life – Brzo skeniranje + Ručni unos</title>
+<style>
+body{font-family:system-ui;margin:16px}
+.row{margin:10px 0}
+button,input{padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fff}
+pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;margin-top:12px}
+small{color:#6b7280}
+</style>
+<h1>Brzo skeniranje + Ručni unos</h1>
+<div class="row">
+  <input id="file" type="file" accept="image/*,.heic,application/pdf">
+  <button id="run">Pokreni OCR</button>
+</div>
+<div class="row">
+  <input id="manual" placeholder="npr. 12.11.25, 2025/11, 12 NOV 2025, EXP 12NOV25, 11/25" style="width:360px">
+  <button id="save">Spremi ručno</button>
+  <small>(ručni unos ako OCR ne nađe)</small>
+</div>
+<pre id="out">Spremno.</pre>
+<script>
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,'0'), eom=(y,m)=>new Date(y,m,0).getDate();
+const M={JAN:1,FEB:2,MAR:3,APR:4,MAY:5,JUN:6,JUL:7,AUG:8,SEP:9,OCT:10,NOV:11,DEC:12,SIJ:1,VEL:2,OZU:3,TRA:4,SVI:5,LIP:6,SRP:7,KOL:8,RUJ:9,LIS:10,STU:11,PRO:12};
+function parseAny(s){
+  const t=(s||'').replace(/[,;|]/g,' ').replace(/\s+/g,' ').toUpperCase();
+  let m=t.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})\b/); if(m){const d=+m[1],mo=+m[2],y=+m[3]; if(mo>=1&&mo<=12&&d>=1&&d<=31)return{iso:`${y}-${pad(mo)}-${pad(d)}`,pattern:'DD.MM.YYYY'};}
+  m=t.match(/\b(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/); if(m){const y=+m[1],mo=+m[2],d=+m[3]; if(mo>=1&&mo<=12&&d>=1&&d<=31)return{iso:`${y}-${pad(mo)}-${pad(d)}`,pattern:'YYYY-MM-DD'};}
+  m=t.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{2})\b/); if(m){const d=+m[1],mo=+m[2],y=2000+(+m[3]); if(mo>=1&&mo<=12&&d>=1&&d<=31)return{iso:`${y}-${pad(mo)}-${pad(d)}`,pattern:'DD.MM.YY → 20YY'};}
+  m=t.match(/\b(0?[1-9]|1[0-2])[\/\-](\d{2})\b/); if(m){const mo=+m[1],y=2000+(+m[2]);return{iso:`${y}-${pad(mo)}-${pad(eom(y,mo))}`,pattern:'MM/YY → EOM'};}
+  m=t.match(/\b(20\d{2})[\/\-](\d{1,2})\b/); if(m){const y=+m[1],mo=+m[2]; if(mo>=1&&mo<=12)return{iso:`${y}-${pad(mo)}-${pad(eom(y,mo))}`,pattern:'YYYY/MM → EOM'};}
+  m=t.match(/\b(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SIJ|VEL|OZU|TRA|SVI|LIP|SRP|KOL|RUJ|LIS|STU|PRO)\s+(20?\d{2})\b/);
+  if(m){const d=+m[1],mo=M[m[2]],y=+(m[3].length===2?('20'+m[3]):m[3]); if(mo&&d>=1&&d<=31)return{iso:`${y}-${pad(mo)}-${pad(d)}`,pattern:'DD MON YY/YYY'};}
+  m=t.match(/\b(?:EXP|EXPIRE|USE\s*BY|BEST\s*BEFORE)?\s*(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SIJ|VEL|OZU|TRA|SVI|LIP|SRP|KOL|RUJ|LIS|STU|PRO)(\d{2,4})\b/);
+  if(m){const d=+m[1],mo=M[m[2]],y=+(m[3].length===2?('20'+m[3]):m[3]); if(mo&&d>=1&&d<=31)return{iso:`${y}-${pad(mo)}-${pad(d)}`,pattern:'EXP DDMonYY/YYY'};}
+  return null;
+}
+function show(j,src){
+  const lots=(j.lots&&j.lots.length)?` 
+LOT: ${j.lots.join(', ')}`:'';
+  const pat=j.pattern?` (${j.pattern})`:'';
+  const tag = (src||'').toString();
+  const srcHr = tag.includes('manual') ? 'ručni unos'
+               : tag.includes('fallback') ? 'rezervni način'
+               : 'server (/api/ocr-date2)';
+  document.getElementById('out').textContent =
+    `Izvor: ${srcHr}\n`+
+    `Ocjena: ${Number(j.score||0).toFixed(2)}${pat}\n`+
+    `Prepoznati datum: ${j.date||'—'}\n`+
+    `Kandidati (raw): ${(j.raw&&j.raw.join(', '))||'—'}${lots}\n\n`+
+    `OCR tekst\n${j.text||''}`;
+}`:'';
+  const pat=j.pattern?` (${j.pattern})`:'';
+  $('out').textContent=
+    `source ${src}\n`+
+    `score ${Number(j.score||0).toFixed(2)}${pat}\n`+
+    `Detected date: ${j.date||'—'}\n`+
+    `Raw candidates: ${(j.raw&&j.raw.join(', '))||'—'}${lots}\n\n`+
+    `OCR text\n${j.text||''}`;
+}
+$('run').onclick=async()=>{
+  const f=$('file').files[0]; if(!f){alert('Odaberi sliku'); return;}
+  $('out').textContent='Slanje → /api/ocr-date2…';
+  try{
+    const fd=new FormData(); fd.append('image', f, f.name);
+    const r=await fetch('/api/ocr-date2',{method:'POST',body:fd});
+    if(!r.ok || r.status===503 || r.status===404){
+      $('out').textContent='rezervni način → /api/ocr-date (imageData)';
+      const b64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(f);});
+      const r2=await fetch('/api/ocr-date',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ imageData:b64, filename:f.name })});
+      const j2=await r2.json(); show(j2,'fallback(dataURL)'); return;
+    }
+    const j=await r.json(); show(j,'server(/api/ocr-date2)');
+  }catch(e){
+    $('out').textContent='Greška: '+(e?.message||e);
+  }
+};
+$('save').onclick=async()=>{
+  const v=$('manual').value.trim();
+  const got=parseAny(v);
+  if(!got){ $('out').textContent='Manual: ne mogu parsirati.'; return; }
+  $('out').textContent=`source manual\nscore 1.00 (${got.pattern})\nDetected date: ${got.iso}\nRaw candidates: ${v}\n\nOCR text\n(manual) ${v}`;
+  try{
+    await fetch('/api/scan-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'manual',date:got.iso,score:1,pattern:got.pattern||'manual',lots:[],raw:[v],text:'manual entry'})});
+  }catch(_){}
+};
+</script>
+<script>
+/* AUTO-SLASH MASK: DD/MM/YY(YY) – radi samo ako polje započne brojem;
+   ako započne slovima (npr. "EXP 12NOV25"), NE dira unos. */
+(function(){
+  var el = document.getElementById("manual");
+  if (!el) return;
+  el.setAttribute("inputmode","numeric");
+  // Uputa korisniku
+  el.placeholder = "DD/MM/YY ili DD/MM/YYYY";
+
+  el.addEventListener("input", function(e){
+    var v = e.target.value;
+    // Ako NE počinje brojkom, dozvoli slobodan unos (EXP, BEST BEFORE…)
+    if (!/^\s*\d/.test(v)) return;
+    // Uzmi samo znamenke (max 8 = DD MM YYYY)
+    var digits = v.replace(/\D/g, "").slice(0, 8);
+    var out = "";
+    if (digits.length <= 2) {
+      out = digits;                             // D, DD
+    } else if (digits.length <= 4) {
+      out = digits.slice(0,2) + "/" + digits.slice(2);           // DD/M, DD/MM
+    } else {
+      out = digits.slice(0,2) + "/" + digits.slice(2,4) + "/" + digits.slice(4); // DD/MM/YY(YY)
+    }
+    if (out !== v) {
+      e.target.value = out;
+      // Kursor na kraj da ne "skače"
+      var p = out.length;
+      e.target.setSelectionRange(p, p);
+    }
+  });
+})();
+</script>
+
+
+
+
+
+

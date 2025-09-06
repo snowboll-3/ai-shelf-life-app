@@ -1,0 +1,166 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Shelf-Life – Brzo skeniranje + Ručni unos</title>
+<style>
+  body{font-family:system-ui;margin:16px}
+  .row{margin:10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  button,input{padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fff}
+  pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;margin-top:12px}
+  small{color:#6b7280}
+  input[type="file"]{padding:8px}
+  .split input{width:68px}
+  .split span{user-select:none}
+  .primary{background:#0ea5e9;color:#fff;border-color:#0ea5e9}
+  .primary:disabled{opacity:.5}
+</style>
+
+<h1>Brzo skeniranje + Ručni unos</h1>
+
+<div class="row">
+  <input id="file" type="file" accept="image/*,.heic,application/pdf">
+  <button id="run" class="primary">Pokreni OCR</button>
+  <small>(ako OCR ne prepozna datum, upišite ručno ispod)</small>
+</div>
+
+<div class="row split">
+  <!-- skriveno polje u koje upisujemo DD/MM/YYYY za postojeću logiku -->
+  <input id="manual" type="text" style="display:none">
+  <label>Ručni datum:</label>
+  <input id="dd" inputmode="numeric" maxlength="2" placeholder="DD">
+  <span>/</span>
+  <input id="mm" inputmode="numeric" maxlength="2" placeholder="MM">
+  <span>/</span>
+  <input id="yyyy" inputmode="numeric" maxlength="4" placeholder="YYYY">
+  <button id="save" disabled>Spremi ručno</button>
+</div>
+
+<pre id="out">Spremno.</pre>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// Helpers: validacija i format
+function digits(s){ return (s||"").replace(/\D/g,""); }
+function pad2(s){ return s.length===1 ? "0"+s : s; }
+function valid(d,m,y){
+  if(d.length!==2||m.length!==2||y.length!==4) return false;
+  const D=+d, M=+m, Y=+y, dt=new Date(Y,M-1,D);
+  return dt.getFullYear()===Y && dt.getMonth()===(M-1) && dt.getDate()===D;
+}
+function toISO(d,m,y){ return `${y}-${m}-${d}`; }
+
+// HR ispis rezultata
+function showHR(j, srcTag){
+  // helper: ISO (YYYY-MM-DD) -> DD/MM/YYYY
+  function isoToDMY(iso){
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||"");
+    if(!m) return iso||"";
+    return m[3] + "/" + m[2] + "/" + m[1];
+  }
+  const lots = (j?.lots?.length) ? `\nLOT: ${j.lots.join(', ')}` : '';
+  // Uvijek prikaži DD/MM/YYYY
+  const pat  = ' (DD/MM/YYYY)';
+  const srcHr = srcTag==='manual' ? 'ručni unos'
+               : srcTag==='fallback' ? 'rezervni način'
+               : 'server (/api/ocr-date2)';
+  const displayDate = j?.date ? isoToDMY(j.date) : '—';
+  document.getElementById('out').textContent =
+    `Izvor: ${srcHr}\n`+
+    `Ocjena: ${Number(j?.score||0).toFixed(2)}${pat}\n`+
+    `Prepoznati datum: ${displayDate}\n`+
+    `Kandidati (raw): ${(j?.raw&&j.raw.join(', '))||'—'}${lots}\n\n`+
+    `OCR tekst\n${j?.text||''}`;
+}` : '';
+  const pat  = j?.pattern ? ` (${j.pattern})` : '';
+  const srcHr = srcTag==='manual' ? 'ručni unos'
+               : srcTag==='fallback' ? 'rezervni način'
+               : 'server (/api/ocr-date2)';
+  $('#out').textContent =
+    `Izvor: ${srcHr}\n`+
+    `Ocjena: ${Number(j?.score||0).toFixed(2)}${pat}\n`+
+    `Prepoznati datum: ${j?.date||'—'}\n`+
+    `Kandidati (raw): ${(j?.raw&&j.raw.join(', '))||'—'}${lots}\n\n`+
+    `OCR tekst\n${j?.text||''}`;
+}
+
+// OCR poziv (Render preko našeg proxya)
+async function tryOcr(file){
+  $('#out').textContent = 'Slanje → /api/ocr-date2…';
+  try{
+    const fd = new FormData(); fd.append('image', file, file.name||'image');
+    const r  = await fetch('/api/ocr-date2',{method:'POST',body:fd});
+    if(!r.ok || r.status===503 || r.status===404){
+      $('#out').textContent = 'rezervni način → /api/ocr-date (imageData)';
+      const b64 = await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(file); });
+      const r2  = await fetch('/api/ocr-date',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({imageData:b64, filename:file.name||'image'})});
+      const j2  = await r2.json(); showHR(j2,'fallback'); return;
+    }
+    const j = await r.json(); showHR(j,'server');
+  }catch(e){
+    $('#out').textContent = 'Greška: '+(e?.message||e);
+  }
+}
+
+// Handleri: RUN OCR
+$('#run').onclick = ()=> {
+  const f = $('#file').files?.[0];
+  if(!f){ $('#out').textContent='Odaberite sliku ili PDF.'; return; }
+  tryOcr(f);
+};
+
+// Ručni unos (3 polja): auto-jump, pad na blur, enable Save
+function syncManual(){
+  const d = digits($('#dd').value).slice(0,2);
+  const m = digits($('#mm').value).slice(0,2);
+  const y = digits($('#yyyy').value).slice(0,4);
+  // ne mijenjamo prikaz odmah; samo enable/disable
+  const ok = valid(d.padStart(2,'0'), m.padStart(2,'0'), y);
+  $('#save').disabled = !ok;
+  // upiši hidden samo kad je kompletno i valjano
+  if (ok) {
+    $('#manual').value = pad2(d)+"/"+pad2(m)+"/"+y;
+  } else {
+    $('#manual').value = '';
+  }
+}
+['#dd','#mm','#yyyy'].forEach(sel=>{
+  const el = $(sel);
+  el.addEventListener('input', e=>{
+    e.target.value = digits(e.target.value).slice(0, e.target.id==='yyyy'?4:2);
+    // auto-jump
+    if(e.target.id==='dd' && e.target.value.length===2) $('#mm').focus();
+    if(e.target.id==='mm' && e.target.value.length===2) $('#yyyy').focus();
+    syncManual();
+  });
+  el.addEventListener('blur', e=>{
+    if(e.target.id!=='yyyy' && e.target.value.length===1) e.target.value = pad2(e.target.value);
+    syncManual();
+  });
+  el.addEventListener('keydown', e=>{
+    if(e.key==='Backspace' && e.target.value.length===0){
+      if(e.target.id==='mm') $('#dd').focus();
+      if(e.target.id==='yyyy') $('#mm').focus();
+    }
+  });
+});
+syncManual();
+
+// Spremi ručno
+$('#save').onclick = async ()=>{
+  const v = $('#manual').value.trim();
+  if (!v) { $('#out').textContent='Ručni unos nije potpun (DD/MM/YYYY).'; return; }
+  // parse DD/MM/YYYY → ISO
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v);
+  if (!m){ $('#out').textContent='Neispravan format (očekujem DD/MM/YYYY).'; return; }
+  const d=m[1], mo=m[2], y=m[3];
+  if (!valid(d,mo,y)){ $('#out').textContent='Neispravan datum.'; return; }
+  const iso = toISO(d,mo,y);
+  // pokaži rezultat
+  showHR({score:1,date:iso,pattern:'DD/MM/YYYY',raw:[v],text:'(ručni unos)'}, 'manual');
+  // zapiši u log (best-effort)
+  try {
+    await fetch('/api/scan-log',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source:'manual',date:iso,score:1,pattern:'DD/MM/YYYY',lots:[],raw:[v],text:'manual entry'})});
+  } catch(_) {}
+};
+</script>
+

@@ -1,0 +1,106 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Shelf-Life – Ručni unos datuma</title>
+<style>
+  body{font-family:system-ui;margin:16px}
+  .row{margin:10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  button,input{padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fff}
+  .primary{background:#0ea5e9;color:#fff;border-color:#0ea5e9}
+  .primary:disabled{opacity:.5}
+  pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;margin-top:12px}
+  .split input{width:70px}
+  .split span{user-select:none}
+  #msg{color:#6b7280}
+</style>
+
+<h1>Ručni unos datuma</h1>
+
+<div class="row split">
+  <label>Datum:</label>
+  <input id="dd" inputmode="numeric" maxlength="2" placeholder="DD">
+  <span>/</span>
+  <input id="mm" inputmode="numeric" maxlength="2" placeholder="MM">
+  <span>/</span>
+  <input id="yyyy" inputmode="numeric" maxlength="4" placeholder="YYYY">
+  <button id="save" class="primary" disabled>Spremi ručno</button>
+  <small id="msg"></small>
+</div>
+
+<pre id="out">Spremno.</pre>
+
+<script>
+const $=s=>document.querySelector(s);
+function digits(s){return (s||"").replace(/\D/g,"");}
+function pad2(s){return s.length===1?"0"+s:s;}
+function eom(y,m){ return new Date(y,m,0).getDate(); }
+function valid(d,m,y){
+  if(d.length!==2||m.length!==2||y.length!==4) return false;
+  const D=+d, M=+m, Y=+y, dt=new Date(Y,M-1,D);
+  return dt.getFullYear()===Y && dt.getMonth()===(M-1) && dt.getDate()===D;
+}
+function toISO(d,m,y){return `${y}-${m}-${d}`;}
+
+function sync({fromBlur=false}={}){
+  let d=digits($('#dd').value).slice(0,2);
+  let m=digits($('#mm').value).slice(0,2);
+  let y=digits($('#yyyy').value).slice(0,4);
+  let msg='';
+
+  if (m.length===2 && +m>12){ m='12'; $('#mm').value=m; msg='Mjesec prilagođen na 12.'; }
+
+  if (fromBlur && $('#dd')!==document.activeElement && d.length===1){ d=pad2(d); $('#dd').value=d; }
+  if (fromBlur && $('#mm')!==document.activeElement && m.length===1){ m=pad2(m); $('#mm').value=m; }
+
+  if (m.length===2 && y.length===4 && d.length>=1){
+    const maxD=eom(+y,+m);
+    if (+d>maxD){ d=String(maxD).padStart(2,'0'); $('#dd').value=d; msg = msg || `Dan prilagođen na ${d}.`; }
+  }
+
+  if ($('#dd')===document.activeElement && d.length===2) $('#mm').focus();
+  if ($('#mm')===document.activeElement && m.length===2) $('#yyyy').focus();
+
+  $('#msg').textContent = msg;
+  const ok = valid(d.padStart(2,'0'), m.padStart(2,'0'), y);
+  $('#save').disabled = !ok;
+
+  return {d,m,y,ok};
+}
+['#dd','#mm','#yyyy'].forEach(sel=>{
+  const el=$(sel);
+  el.addEventListener('input', ()=>{
+    el.value = digits(el.value).slice(0, el.id==='yyyy'?4:2);
+    sync({});
+  });
+  el.addEventListener('blur', ()=> sync({fromBlur:true}));
+  el.addEventListener('keydown', e=>{
+    if(e.key==='Backspace' && e.target.value.length===0){
+      if(e.target.id==='mm') $('#dd').focus();
+      if(e.target.id==='yyyy') $('#mm').focus();
+    }
+  });
+});
+sync({});
+
+function show(dateDMY, raw){
+  $('#out').textContent =
+`Izvor: ručni unos
+Ocjena: 1.00 (DD/MM/YYYY)
+Prepoznati datum: ${dateDMY}
+Kandidati (raw): ${raw}
+
+OCR tekst
+(ručni unos)`;
+}
+
+$('#save').onclick = async ()=>{
+  const {d,m,y,ok} = sync({fromBlur:true});
+  if (!ok){ $('#out').textContent='Neispravan datum.'; return; }
+  const dd=pad2(d), mm=pad2(m), yyyy=y;
+  const iso = toISO(dd,mm,yyyy);
+  const dmy = `${dd}/${mm}/${yyyy}`;
+  show(dmy, dmy);
+  try{
+    await fetch('/api/scan-log',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source:'manual',date:iso,score:1,pattern:'DD/MM/YYYY',lots:[],raw:[dmy],text:'manual entry'})});
+  }catch(_){}
+};
+</script>

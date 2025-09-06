@@ -1,0 +1,89 @@
+﻿<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Client OCR (Tesseract.js) – date detect</title>
+<style>
+body{font-family:system-ui;margin:16px}input,button{padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fff}
+pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;margin-top:12px;max-height:50vh;overflow:auto}
+label{margin-right:12px}
+</style>
+<h1>Client OCR (Tesseract.js) – date detect</h1>
+<input id="f" type="file" accept="image/*,.heic,application/pdf">
+<label><input id="usePrep" type="checkbox" checked> Preprocess (Otsu + upscale)</label>
+<label><input id="tryInv" type="checkbox"> Try invert too</label>
+<button id="go">Run OCR</button>
+<pre id="out">Ready.</pre>
+
+<script src="https://unpkg.com/tesseract.js@4/dist/tesseract.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+
+// --- helpers: canvas → Otsu binarize + upscale ---
+function upscale(src, s=2, max=2200){
+  const W=Math.min(Math.round(src.width*s), max), H=Math.round(src.height*W/src.width);
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const x=c.getContext('2d'); x.imageSmoothingEnabled=false; x.drawImage(src,0,0,W,H);
+  return c;
+}
+function otsu(canvas, invert=false){
+  const ctx=canvas.getContext('2d'); const d=ctx.getImageData(0,0,canvas.width,canvas.height), p=d.data;
+  let min=255,max=0; const g=new Uint8ClampedArray(canvas.width*canvas.height);
+  for(let i=0,j=0;i<p.length;i+=4,j++){ const v=0| (0.299*p[i]+0.587*p[i+1]+0.114*p[i+2]); g[j]=v; if(v<min)min=v; if(v>max)max=v; }
+  const rng=Math.max(1,max-min); for(let i=0;i<g.length;i++){ g[i]=((g[i]-min)*255/rng)|0; }
+  const hist=new Uint32Array(256); for(let i=0;i<g.length;i++) hist[g[i]]++;
+  const total=g.length; let sum=0; for(let t=0;t<256;t++) sum+=t*hist[t];
+  let sumB=0, wB=0, varMax=-1, thr=128;
+  for(let t=0;t<256;t++){ wB+=hist[t]; if(!wB) continue; const wF=total-wB; if(!wF) break; sumB+=t*hist[t];
+    const mB=sumB/wB, mF=(sum-sumB)/wF; const vb=wB*wF*(mB-mF)*(mB-mF); if(vb>varMax){varMax=vb; thr=t;} }
+  for(let i=0,j=0;i<p.length;i+=4,j++){ let v=g[j]>thr?255:0; if(invert)v=255-v; p[i]=p[i+1]=p[i+2]=v; p[i+3]=255; }
+  ctx.putImageData(d,0,0); return canvas;
+}
+function fileToCanvas(file){
+  return new Promise((res,rej)=>{
+    const img=new Image(); img.onload=()=>{ const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight; c.getContext('2d').drawImage(img,0,0); res(c); };
+    img.onerror=rej; img.src=URL.createObjectURL(file);
+  });
+}
+function canvasToBlob(c){ return new Promise(r=>c.toBlob(b=>r(b),'image/png',0.92)); }
+
+// --- date parsing ---
+function eom(y,m){ return new Date(y,m,0).getDate(); }
+const M={JAN:1,FEB:2,MAR:3,APR:4,MAY:5,JUN:6,JUL:7,AUG:8,SEP:9,OCT:10,NOV:11,DEC:12,SIJ:1,VEL:2,OZU:3,TRA:4,SVI:5,LIP:6,SRP:7,KOL:8,RUJ:9,LIS:10,STU:11,PRO:12};
+function parseDate(txt){
+  const t=(txt||"").replace(/[,;|]/g," ").replace(/\s+/g," ").toUpperCase();
+  let m=t.match(/\b(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})\b/); if(m){const d=+m[1],mo=+m[2],y=+m[3]; if(mo>=1&&mo<=12&&d>=1&&d<=31) return {iso:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,pattern:'DD.MM.YYYY'};}
+  m=t.match(/\b(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\b/); if(m){const y=+m[1],mo=+m[2],d=+m[3]; if(mo>=1&&mo<=12&&d>=1&&d<=31) return {iso:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,pattern:'YYYY-MM-DD'};}
+  m=t.match(/\b(20\d{2})[\/\-](\d{1,2})\b/); if(m){const y=+m[1],mo=+m[2]; if(mo>=1&&mo<=12) return {iso:`${y}-${String(mo).padStart(2,'0')}-${String(eom(y,mo)).padStart(2,'0')}`,pattern:'YYYY/MM → EOM'};}
+  m=t.match(/\b(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SIJ|VEL|OZU|TRA|SVI|LIP|SRP|KOL|RUJ|LIS|STU|PRO)\s+(20?\d{2})\b/);
+  if(m){const d=+m[1],mo=M[m[2]],y=+(m[3].length===2?('20'+m[3]):m[3]); if(mo&&d>=1&&d<=31) return {iso:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,pattern:'DD MON YYYY'};}
+  m=t.match(/\b(?:EXP|EXPIRE|EXPIRY)?\s*(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SIJ|VEL|OZU|TRA|SVI|LIP|SRP|KOL|RUJ|LIS|STU|PRO)(\d{2,4})\b/);
+  if(m){const d=+m[1],mo=M[m[2]],y=+(m[3].length===2?('20'+m[3]):m[3]); if(mo&&d>=1&&d<=31) return {iso:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,pattern:'EXP DDMonYY'};}
+  m=t.match(/\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|SIJ|VEL|OZU|TRA|SVI|LIP|SRP|KOL|RUJ|LIS|STU|PRO)\s+(20\d{2})\b/);
+  if(m){const mo=M[m[1]],y=+m[2]; return {iso:`${y}-${String(mo).padStart(2,'0')}-${String(eom(y,mo)).padStart(2,'0')}`,pattern:'MON YYYY → EOM'};}
+  return null;
+}
+
+async function runOnce(file, invert=false){
+  // make canvas
+  let c = await fileToCanvas(file);
+  if ($('usePrep').checked) { c = upscale(c, 2.2, 2200); c = otsu(c, invert); }
+  const blob = await canvasToBlob(c);
+  const { data: { text } } = await Tesseract.recognize(blob, 'eng', {
+    tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ./:- ',
+    preserve_interword_spaces: '1',
+    // PSM 6: Assume a single uniform block of text
+    // NOTE: in tesseract.js set via 'config' string:
+    // Warning: not all configs propagate; whitelist is most impactful here.
+  });
+  return (text||'').trim();
+}
+
+$('go').onclick = async ()=>{
+  const f=$('f').files[0]; if(!f){$('out').textContent='Odaberi sliku'; return;}
+  $('out').textContent='Running OCR…';
+  let txt = await runOnce(f,false);
+  if (!txt && $('tryInv').checked) txt = await runOnce(f,true);
+  const date = parseDate(txt);
+  $('out').textContent =
+    `Detected date: ${date?date.iso:'—'} ${date?('('+date.pattern+')'):''}\n\n`+
+    `OCR text:\n${txt}`;
+};
+</script>

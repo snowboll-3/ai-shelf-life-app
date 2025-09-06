@@ -1,0 +1,42 @@
+﻿<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Logs – AI Shelf-Life</title>
+<style>
+  body{font-family:system-ui;margin:16px} table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #eee;padding:6px 8px;font-size:14px;vertical-align:top}
+  th{background:#fafafa}.row{margin:10px 0}
+</style>
+<h1>Logs</h1>
+<div class="row">
+  <button id="reload">Reload</button>
+  <a href="/logs/scans.csv" download>⬇️ Download CSV</a>
+</div>
+<table id="t"><thead><tr>
+  <th>ts</th><th>source</th><th>barcode</th><th>product</th><th>date</th><th>score</th><th>pattern</th><th>lots</th><th>raw</th><th>text</th>
+</tr></thead><tbody></tbody></table>
+<script>
+async function load(){
+  try{
+    const r = await fetch('/api/logs/scans.json?limit=200');
+    const arr = await r.json();
+    const tb = document.querySelector('#t tbody');
+    tb.innerHTML = (arr||[]).reverse().map(x=>\`
+      <tr>
+        <td>\${x.ts||''}</td>
+        <td>\${x.source||''}</td>
+        <td>\${x.barcode||''}</td>
+        <td>\${x.product||''}</td>
+        <td>\${x.date||''}</td>
+        <td>\${(x.score!=null)? Number(x.score).toFixed(2): ''}</td>
+        <td>\${x.pattern||''}</td>
+        <td>\${(x.lots||[]).join('|')}</td>
+        <td>\${(x.raw||[]).join('|')}</td>
+        <td>\${(x.text||'').slice(0,200)}</td>
+      </tr>\`).join('');
+  }catch(e){
+    alert('Ne mogu dohvatiti /api/logs/scans.json');
+  }
+}
+document.getElementById('reload').onclick=load;
+load();
+</script>
