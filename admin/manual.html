@@ -1,0 +1,36 @@
+﻿<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Manual Premium</title>
+<style>body{font:14px system-ui;padding:24px;max-width:700px;margin:auto}label{display:block;margin:12px 0 4px}input,textarea{width:100%;padding:8px;border:1px solid #ccc;border-radius:8px}button{margin-top:12px;padding:10px 16px;border:0;border-radius:10px;background:#3fb950;color:#fff;font-weight:600;cursor:pointer}pre{background:#f6f8fa;border:1px solid #e5e7eb;border-radius:8px;padding:12px;white-space:pre-wrap}</style>
+</head>
+<body>
+<h2>Manual Premium Grant</h2>
+<p>Auth: user <b>admin</b>, password = <code>ADMIN_KEY</code>.</p>
+<form id="f">
+  <label>Token</label>
+  <input name="token" placeholder="paste ?token=... value" required />
+  <label>Months</label>
+  <input name="months" type="number" min="1" step="1" value="1" />
+  <label>Reason</label>
+  <textarea name="reason" placeholder="why (user request, support, etc)"></textarea>
+  <button type="submit">Grant / Extend</button>
+</form>
+<pre id="out"></pre>
+<script>
+const out = document.getElementById('out');
+document.getElementById('f').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.target).entries());
+  const pass = prompt('ADMIN_KEY password:');
+  const res = await fetch('/admin/premium/grant', {
+    method: 'POST',
+    headers: {
+      'Content-Type':'application/json',
+      'Authorization':'Basic ' + btoa('admin:' + pass)
+    },
+    body: JSON.stringify(data)
+  });
+  out.textContent = await res.text();
+});
+</script>
+</body></html>

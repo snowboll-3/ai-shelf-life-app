@@ -16,6 +16,7 @@
         "ajv-formats": "^3.0.1",
         "dotenv": "^17.2.1",
         "express": "^5.1.0",
+        "jsonwebtoken": "^9.0.2",
         "multer": "^2.0.2",
         "tesseract.js": "^5.1.1"
     },
@@ -32,5 +33,8 @@
     "bugs": {
         "url": "https://github.com/snowboll-3/ai-shelf-life-app/issues"
     },
-    "homepage": "https://github.com/snowboll-3/ai-shelf-life-app#readme"
+    "homepage": "https://github.com/snowboll-3/ai-shelf-life-app#readme",
+    "directories": {
+        "lib": "lib"
+    }
 }

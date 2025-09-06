@@ -1,0 +1,21 @@
+﻿services:
+  - type: web
+    name: ai-shelf-life
+    env: node
+    plan: free
+    region: frankfurt
+    buildCommand: "npm ci"
+    startCommand: "node server_safe.js"
+    envVars:
+      - key: SECRET
+        value: mrcina_one_secret_prod_change_me
+      - key: ADMIN_KEY
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: "/"
+    autoDeploy: true
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1

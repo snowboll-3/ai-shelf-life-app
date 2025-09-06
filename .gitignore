@@ -1,4 +1,4 @@
-﻿node_modules/
-*.zip
-server3040.out
-server3040.err
+﻿node_modules
+data
+logs
+.env

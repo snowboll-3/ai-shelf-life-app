@@ -1,0 +1,51 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>HEIC/PDF Polish</title>
+<style>
+  body{font:14px system-ui;padding:16px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .card{border:1px solid #ddd;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  canvas{max-width:100%;border:1px dashed #ccc;border-radius:8px}
+  progress{width:200px;height:10px}
+</style>
+</head>
+<body>
+<h2>HEIC/PDF Polish (client-side)</h2>
+<input id="file" type="file" accept=".heic,.pdf,image/*" multiple />
+<div class="row" id="out"></div>
+
+<script src="https://unpkg.com/heic2any/dist/heic2any.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"></script>
+<script>
+const out=document.getElementById('out');
+const card=html=>{const d=document.createElement('div'); d.className='card'; d.innerHTML=html; out.appendChild(d); return d;};
+const dl=(blob,name)=>{const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href);};
+const draw=(img,maxW=1800)=>{const s=Math.min(1,maxW/img.width),c=document.createElement('canvas'); c.width=img.width*s; c.height=img.height*s; c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c;};
+
+async function handleHEIC(f){
+  const n=card(`<b>${f.name}</b><div><progress max="100" value="10"></progress></div><div class=preview></div>`);
+  const blob=await heic2any({blob:f,toType:'image/jpeg',quality:0.88});
+  const img=new Image(); img.src=URL.createObjectURL(blob); await img.decode();
+  const c=draw(img); n.querySelector('.preview').appendChild(c);
+  const jpg=await new Promise(r=>c.toBlob(r,'image/jpeg',0.88)); dl(jpg,f.name.replace(/\.heic$/i,'.jpg'));
+  n.querySelector('progress').value=100;
+}
+async function handlePDF(f){
+  const n=card(`<b>${f.name}</b><div class=preview></div>`);
+  const buf=await f.arrayBuffer(); const pdf=await pdfjsLib.getDocument({data:buf}).promise; const page=await pdf.getPage(1);
+  const vp=page.getViewport({scale:1.5}); const c=document.createElement('canvas'); c.width=vp.width; c.height=vp.height; n.querySelector('.preview').appendChild(c);
+  await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+  const png=await new Promise(r=>c.toBlob(r,'image/png',0.9)); dl(png,f.name.replace(/\.pdf$/i,'-page1.png'));
+}
+file.addEventListener('change', async e=>{
+  for (const f of e.target.files){
+    if (/\.heic$/i.test(f.name)) await handleHEIC(f);
+    else if (/\.pdf$/i.test(f.name)) await handlePDF(f);
+    else { const img=new Image(); img.src=URL.createObjectURL(f); await img.decode(); const c=draw(img); const n=card(`<b>${f.name}</b>`); n.appendChild(c); }
+  }
+});
+</script>
+</body></html>
