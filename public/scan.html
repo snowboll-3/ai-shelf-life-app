@@ -1,144 +1,300 @@
 ﻿<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Shelf-Life – Scan</title>
-    <style>
-      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;line-height:1.4;margin:24px}
-      .card{border:1px solid #e5e7eb;border-radius:14px;padding:16px;margin-bottom:16px}
-      .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-      .btn{padding:10px 14px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;cursor:pointer}
-      .btn.primary{background:#111827;color:#fff;border-color:#111827}
-      .muted{color:#6b7280}
-      #preview{max-width:100%;border:1px dashed #d1d5db;border-radius:10px;margin-top:8px}
-      #result pre{white-space:pre-wrap;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
-      .tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #d1d5db;background:#f9fafb;margin-right:6px}
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/heic2any/dist/heic2any.min.js"></script>
-  </head>
-  <body>
-    <h1>Scan label / Skener etikete</h1>
+<html lang="hr"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Scan datuma (OCR)</title>
+<style>
+  body{font:14px system-ui;margin:0;padding:16px;max-width:1024px}
+  #drop{border:2px dashed #999;border-radius:12px;padding:24px;text-align:center}
+  .row{display:flex;gap:16px;flex-wrap:wrap;margin-top:16px}
+  .col{flex:1 1 480px}
+  .card{border:1px solid #ddd;border-radius:10px;padding:12px}
+  canvas{max-width:100%;border:1px dashed #ccc;border-radius:8px}
+  #log{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;background:#0b1020;color:#e6edf3;padding:10px;border-radius:8px;min-height:120px}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;background:#3fb950;color:#fff;font-weight:600}
+  .muted{opacity:.7}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+  .controls label{display:flex;gap:6px;align-items:center;background:#f6f8fa;border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px}
+  .controls input[type="range"]{width:140px}
+  #sel{margin-top:6px}
+</style>
+</head>
+<body>
+<h2>📅 Scan datuma (OCR)</h2>
+<p class="card">Dodano: <b>OpenCV.js</b> pre-processing (Otsu/adaptive), <b>ručni crop</b>, <b>rotacija</b>, dvofazni OCR (normalni + “digits-only”). Parser: <b>MMM</b> (HR/EN/FR/IT) + <b>numerički</b> (DD.MM.YYYY, YYYY-MM-DD, <u>MM/YYYY</u> → kraj mjeseca).</p>
 
+<div class="controls">
+  <label>Rot <input id="rot" type="range" min="-45" max="45" step="1" value="0"><span id="rval">0°</span></label>
+  <label>Scale <input id="scale" type="range" min="1.0" max="3.0" step="0.1" value="2.2"><span id="sval">2.2×</span></label>
+  <label>Preproc
+    <select id="pre">
+      <option value="none">None</option>
+      <option value="otsu" selected>Otsu</option>
+      <option value="amean">Adaptive (Mean)</option>
+      <option value="agauss">Adaptive (Gauss)</option>
+    </select>
+  </label>
+  <label>Blur <input id="blur" type="range" min="1" max="9" step="2" value="3"><span id="bval">3</span></label>
+  <label>Block <input id="blk" type="range" min="11" max="51" step="2" value="25"><span id="blkval">25</span></label>
+  <label>C <input id="ac" type="range" min="-10" max="10" step="1" value="2"><span id="acval">2</span></label>
+  <label>Morph <input id="mk" type="range" min="0" max="3" step="1" value="1"><span id="mkval">1</span></label>
+  <label><input id="digits" type="checkbox" checked> “Digits-only” pass</label>
+</div>
+
+<div id="drop">Povuci datoteku ovdje ili <input id="file" type="file" accept=".pdf,.heic,image/*" /></div>
+
+<div class="row">
+  <div class="col">
     <div class="card">
-      <div class="row">
-        <label class="btn">
-          📷 Choose image (JPG/PNG/HEIC)
-          <input id="file" type="file" accept="image/*,.heic" hidden />
-        </label>
-        <button id="run" class="btn primary">Run OCR</button>
-        <label class="row muted">
-          <input type="checkbox" id="show-pre" checked /> preview pre-processed
-        </label>
-      </div>
-      <img id="preview" alt="preview" />
-      <canvas id="work" hidden></canvas>
+      <h3>Ulaz / Preview (selektiraj pravokutnik mišem)</h3>
+      <canvas id="view" width="10" height="10"></canvas>
+      <div id="sel" class="muted">Selektirano: (—)</div>
+      <p><button id="ocrAll">OCR cijele slike</button> <button id="ocrSel">OCR selekcije</button> <button id="ocrSrv">OCR (server)</button></p>
     </div>
+  </div>
+  <div class="col">
+    <div class="card"><h3>Rezultati</h3><div id="results"></div></div>
+    <p><button id="showTxt">Prikaži/Otpiši OCR tekst</button></p>
+    <pre id="txt" style="display:none;background:#111;color:#9fe;padding:10px;border-radius:8px;max-height:260px;overflow:auto"></pre>
+  </div>
+</div>
 
-    <div class="card">
-      <div id="result"><div class="muted">No result yet.</div></div>
-    </div>
+<h3>Log</h3>
+<div id="log"></div>
 
-    <script>
-      const fileEl = document.getElementById('file');
-      const runBtn = document.getElementById('run');
-      const preview = document.getElementById('preview');
-      const work = document.getElementById('work');
-      const showPre = document.getElementById('show-pre');
-      const result = document.getElementById('result');
+<script>
+// ---------- log ----------
+const logEl = document.getElementById('log');
+const log = m => { logEl.textContent += (m + "\n"); console.log(m); };
 
-      let lastFile = null;
+// ---------- MMM + numeric parser ----------
+function normalize(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(); }
+const ALIAS=new Map(); const A=(arr,n)=>arr.forEach(x=>ALIAS.set(normalize(x),n));
+// HR nominativi
+A(['SIJ','SIJECANJ'],1);A(['VEL','VELJACA','VELJ'],2);A(['OZU','OZUJAK','OZUJ'],3);
+A(['TRA','TRAVANJ'],4);A(['SVI','SVIBANJ'],5);A(['LIP','LIPANJ'],6);
+A(['SRP','SRPANJ'],7);A(['KOL','KOLOVOZ'],8);A(['RUJ','RUJAN'],9);
+A(['LIS','LISTOPAD'],10);A(['STU','STUDENI'],11);A(['PRO','PROSINAC'],12);
+// HR genitivi
+A(['SIJECNJA'],1);A(['VELJACE'],2);A(['OZUJKA'],3);A(['TRAVNJA'],4);A(['SVIBNJA'],5);
+A(['LIPNJA'],6);A(['SRPNJA'],7);A(['KOLOVOZA'],8);A(['RUJNA'],9);
+A(['LISTOPADA'],10);A(['STUDENOGA','STUDENOG'],11);A(['PROSINCA'],12);
+// EN
+A(['JAN','JANUARY'],1);A(['FEB','FEBRUARY'],2);A(['MAR','MARCH'],3);
+A(['APR','APRIL'],4);A(['MAY'],5);A(['JUN','JUNE'],6);A(['JUL','JULY'],7);
+A(['AUG','AUGUST'],8);A(['SEP','SEPT','SEPTEMBER'],9);A(['OCT','OCTOBER'],10);
+A(['NOV','NOVEMBER'],11);A(['DEC','DECEMBER'],12);
+// FR
+A(['JANV','JAN'],1);A(['FEVR','FEV','FEVR.','FÉVR'],2);A(['MARS','MAR'],3);A(['AVR'],4);A(['MAI'],5);
+A(['JUIN'],6);A(['JUIL'],7);A(['AOUT','AOÛT'],8);A(['SEPT'],9);A(['OCT'],10);A(['NOV'],11);A(['DEC','DÉC'],12);
+// IT
+A(['GEN','GENNAIO'],1);A(['FEB','FEBBRAIO'],2);A(['MAR','MARZO'],3);
+A(['APR','APRILE'],4);A(['MAG','MAGGIO'],5);A(['GIU','GIUGNO'],6);
+A(['LUG','LUGLIO'],7);A(['AGO','AGOSTO'],8);A(['SET','SETTEMBRE'],9);
+A(['OTT','OTTOBRE'],10);A(['NOV','NOVEMBRE'],11);A(['DIC','DICEMBRE'],12);
 
-      fileEl.addEventListener('change', () => {
-        lastFile = fileEl.files[0] || null;
-        if (lastFile) preview.src = URL.createObjectURL(lastFile);
-      });
+const esc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+const MONTH_TOKEN=Array.from(ALIAS.keys()).sort((a,b)=>b.length-a.length).map(esc).join('|');
+const SEP=String.raw`[\\s.,/\\-]+`;
+const P1=new RegExp(String.raw`\\b(?<d>\\d{1,2})${SEP}(?<m>${MONTH_TOKEN})${SEP}(?<y>\\d{2,4})\\b`,'g');
+const P2=new RegExp(String.raw`\\b(?<m>${MONTH_TOKEN})${SEP}(?<d>\\d{1,2})(?!\\d)${SEP}(?<y>\\d{2,4})\\b`,'g');
+const RX_DMY=/\\b(?<d>0?[1-9]|[12]\\d|3[01])[.\\-\\/ ](?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<y>\\d{4}|\\d{2})\\b/g;
+const RX_YMD=/\\b(?<y>\\d{4})[.\\-\\/ ](?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<d>0?[1-9]|[12]\\d|3[01])\\b/g;
+const RX_MY=/\\b(?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<y>\\d{4})\\b/g;
+const toYear=y=>{y=parseInt(y,10);return y<100?2000+y:y;};
+const validDate=(y,m,d)=>{const dt=new Date(y,m-1,d);return dt.getFullYear()==y&&dt.getMonth()==m-1&&dt.getDate()==d;};
+const lastDay=(y,m)=>new Date(y,m,0).getDate();
+function parseMMM(raw){const nd=normalize(raw),out=[];for(const rx of[P1,P2]){rx.lastIndex=0;let m;while((m=rx.exec(nd))){const d=parseInt(m.groups.d,10),mo=ALIAS.get(m.groups.m),y=toYear(m.groups.y);if(!mo||!validDate(y,mo,d))continue;out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false});}}return out;}
+function parseNumeric(raw){const out=[];let m;RX_DMY.lastIndex=0;while((m=RX_DMY.exec(raw))){const d=parseInt(m.groups.d,10),mo=parseInt(m.groups.m,10),y=toYear(m.groups.y);if(!validDate(y,mo,d))continue;out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false});}
+RX_YMD.lastIndex=0;while((m=RX_YMD.exec(raw))){const d=parseInt(m.groups.d,10),mo=parseInt(m.groups.m,10),y=parseInt(m.groups.y,10);if(!validDate(y,mo,d))continue;out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false});}
+RX_MY.lastIndex=0;while((m=RX_MY.exec(raw))){const mo=parseInt(m.groups.m,10),y=parseInt(m.groups.y,10);const d=lastDay(y,mo);out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:true});}
+return out;}
+function dedupe(arr){const seen=new Set(),out=[];for(const x of arr){const k=`${x.year}-${x.month}-${x.day}-${x.approx}`;if(seen.has(k))continue;seen.add(k);out.push(x);}return out;}
+function findAllDates(raw){return dedupe([...parseMMM(raw),...parseNumeric(raw)]);}
 
-      runBtn.addEventListener('click', async () => {
-        if (!lastFile) { alert('Choose an image first.'); return; }
-        try {
-          setStatus('Pre-processing…');
-          const pre = await preprocess(lastFile);
-          if (showPre.checked) preview.src = URL.createObjectURL(pre);
+// ---------- canvasi + UI ----------
+const view=document.getElementById('view'), vctx=view.getContext('2d');
+let baseImg=null, basePdfCanvas=null;
+let sel={x:0,y:0,w:0,h:0,active:false};
+const rotEl=document.getElementById("rot"), scaleEl=document.getElementById("scale"), blurEl=document.getElementById("blur"), preEl=document.getElementById("pre"), blkEl=document.getElementById("blk"), cEl=document.getElementById("ac"), mkEl=document.getElementById("mk");
+const setLbl=(id,v)=>document.getElementById(id).textContent=v;
 
-          const form = new FormData();
-          form.append('image', pre, 'preprocessed.png');
+function imgToCanvas(img,scale=2.2){const c=document.createElement('canvas');c.width=Math.round(img.naturalWidth*scale);c.height=Math.round(img.naturalHeight*scale);c.getContext('2d').drawImage(img,0,0,c.width,c.height);return c;}
 
-          setStatus('Calling /api/ocr-date2…');
-          let r = await fetch('/api/ocr-date2', { method: 'POST', body: form });
-          if (r.status === 503) {
-            setStatus('Light deploy – falling back to /api/ocr-date…');
-            r = await fetch('/api/ocr-date', { method: 'POST', body: form });
-          }
-          const data = await r.json();
-          renderResult(data, r.status);
-        } catch (e) {
-          console.error(e);
-          setStatus('❌ ' + (e && e.message ? e.message : 'Unexpected error'));
-        }
-      });
+// OpenCV bridge
+let cvReady=false;
+function ensureCV(){return new Promise(res=>{
+  if (cvReady) return res(true);
+  if (window.cv && cv.Mat){cvReady=true;return res(true);}
+  const timer=setInterval(()=>{ if(window.cv && cv.Mat){clearInterval(timer);cvReady=true;res(true);} },200);
+});}
 
-      function setStatus(msg) { result.innerHTML = `<div class="muted">${escapeHtml(msg)}</div>`; }
-      function tag(txt){ return `<span class="tag">${escapeHtml(txt)}</span>`; }
-      function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'}[m])); }
+function preprocWithCV(src){
+  const mode=preEl.value; if(mode==='none') return src;
+  if (!cvReady) return src;
+  const k=parseInt(blurEl.value,10);
+  const block=parseInt(blkEl.value,10)|1;
+  const C=parseInt(cEl.value,10);
+  const mk=parseInt(mkEl.value,10);
 
-      function renderResult(data, status) {
-        const tags = [];
-        if (data && typeof data.score === 'number') tags.push(tag(`score ${data.score.toFixed(2)}`));
-        if (data && data.pattern) tags.push(tag(data.pattern));
-        if (status === 503) tags.push(tag('503 fallback'));
-        result.innerHTML = `
-          <div style="margin-bottom:8px">${tags.join(' ')}</div>
-          <div><strong>Detected date:</strong> ${escapeHtml(data && data.date ? data.date : '—')}</div>
-          <div><strong>Raw candidates:</strong> ${escapeHtml((data && data.raw && data.raw.join(', ')) || '—')}</div>
-          <details style="margin-top:10px"><summary>OCR text</summary>
-            <pre>${escapeHtml((data && data.text) || '')}</pre>
-          </details>
-        `;
-      }
+  const dst=document.createElement('canvas'); dst.width=src.width; dst.height=src.height;
 
-      async function preprocess(file) {
-        let blob = file;
-        if ((file.type && file.type.toLowerCase().includes('heic')) || file.name.toLowerCase().endsWith('.heic')) {
-          try { blob = await window.heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 }); }
-          catch (e) { console.warn('HEIC convert failed, sending original', e); }
-        }
-        const bmp = await createImageBitmap(blob);
-        const maxSide = 2000;
-        const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-        work.width = Math.round(bmp.width * scale);
-        work.height = Math.round(bmp.height * scale);
-        const ctx = work.getContext('2d');
-        ctx.drawImage(bmp, 0, 0, work.width, work.height);
+  let mat=cv.imread(src); let gray=new cv.Mat(); cv.cvtColor(mat,gray,cv.COLOR_RGBA2GRAY);
+  if (k>1){ let g=new cv.Mat(); cv.GaussianBlur(gray,g,new cv.Size(k,k),0); gray.delete(); gray=g; }
+  let bw=new cv.Mat();
+  if (mode==='otsu'){
+    cv.threshold(gray,bw,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU);
+  } else {
+    const type=(mode==='amean')?cv.ADAPTIVE_THRESH_MEAN_C:cv.ADAPTIVE_THRESH_GAUSSIAN_C;
+    cv.adaptiveThreshold(gray,bw,255,type,cv.THRESH_BINARY,block, C);
+  }
+  if (mk>0){
+    const kernel=cv.Mat.ones(mk,mk,cv.CV_8U);
+    let mor=new cv.Mat(); cv.morphologyEx(bw, mor, cv.MORPH_CLOSE, kernel);
+    bw.delete(); bw=mor; kernel.delete();
+  }
+  cv.imshow(dst,bw);
+  mat.delete(); gray.delete(); bw.delete();
+  return dst;
+}
 
-        // Grayscale
-        let imgData = ctx.getImageData(0, 0, work.width, work.height);
-        const d = imgData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          const g = Math.round(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
-          d[i] = d[i + 1] = d[i + 2] = g;
-        }
-        // Otsu threshold
-        const hist = new Uint32Array(256);
-        for (let i = 0; i < d.length; i += 4) hist[d[i]]++;
-        const total = work.width * work.height;
-        let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
-        let sumB = 0, wB = 0, varMax = -1, thr = 127;
-        for (let t = 0; t < 256; t++) {
-          wB += hist[t]; if (!wB) continue; const wF = total - wB; if (!wF) break;
-          sumB += t * hist[t];
-          const mB = sumB / wB, mF = (sum - sumB) / wF;
-          const v = wB * wF * (mB - mF) * (mB - mF);
-          if (v > varMax) { varMax = v; thr = t; }
-        }
-        for (let i = 0; i < d.length; i += 4) {
-          const v = d[i] > thr ? 255 : 0;
-          d[i] = d[i + 1] = d[i + 2] = v;
-        }
-        ctx.putImageData(imgData, 0, 0);
-        const out = await new Promise(res => work.toBlob(res, "image/png", 0.95));
-        return out;
-      }
-    </script>
-  </body>
-</html>
+function drawView(){
+  if (!baseImg && !basePdfCanvas) return;
+  const rot=parseInt(rotEl.value,10)*Math.PI/180, scale=parseFloat(scaleEl.value);
+  const src0=basePdfCanvas || imgToCanvas(baseImg,scale);
+  const src1=cvReady ? preprocWithCV(src0) : src0;
+
+  const w=src1.width,h=src1.height;
+  const bbW=Math.abs(w*Math.cos(rot))+Math.abs(h*Math.sin(rot));
+  const bbH=Math.abs(w*Math.sin(rot))+Math.abs(h*Math.cos(rot));
+  view.width=Math.round(bbW); view.height=Math.round(bbH);
+
+  vctx.clearRect(0,0,view.width,view.height);
+  vctx.save();
+  vctx.translate(view.width/2,view.height/2); vctx.rotate(rot);
+  vctx.drawImage(src1, -w/2, -h/2); vctx.restore();
+
+  if (sel.w>0 && sel.h>0){ vctx.save(); vctx.strokeStyle='#3b82f6'; vctx.lineWidth=2; vctx.setLineDash([6,6]); vctx.strokeRect(sel.x,sel.y,sel.w,sel.h); vctx.restore(); }
+}
+
+function cropSelection(){
+  if (!(sel.w>5&&sel.h>5)) return null;
+  const c=document.createElement('canvas'); c.width=sel.w; c.height=sel.h;
+  c.getContext('2d').drawImage(view, sel.x, sel.y, sel.w, sel.h, 0,0, sel.w, sel.h);
+  return c;
+}
+
+// OCR helpers
+async function ocrWithWorker(canvas, {langs, psm, whitelist}){
+  const { createWorker } = Tesseract;
+  const w = await createWorker();
+  await w.loadLanguage(langs); await w.initialize(langs);
+  await w.setParameters({ tessedit_pageseg_mode:String(psm), tessedit_char_whitelist: whitelist });
+  const { data } = await w.recognize(canvas);
+  await w.terminate();
+  return data.text || '';
+}
+
+async function runOCR(canvas){
+  log('OCR A (eng+hrv+ita, PSM 11)…');
+  let allText = await ocrWithWorker(canvas, { langs:'eng+hrv+ita', psm:11, whitelist:"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz./-:" });
+  if (document.getElementById('digits').checked){
+    log('OCR B (digits-only, PSM 7)…');
+    const t2 = await ocrWithWorker(canvas, { langs:'eng+hrv+ita', psm:7, whitelist:"0123456789./-" });
+    allText += "\n" + t2;
+  }
+  document.getElementById('txt').textContent = allText;
+  log('OCR gotovo. Duljina teksta: '+allText.length);
+  const dates = findAllDates(allText);
+  log('Nađeni datumi: '+dates.length);
+  showDates(dates);
+}
+
+const results=document.getElementById('results');
+function fmtLocal(d){ return new Date(d).toLocaleString('hr-HR',{timeZone:'Europe/Zagreb'}); }
+function showDates(arr){
+  results.innerHTML='';
+  if (!arr.length){ results.innerHTML='<p>Nema prepoznatih datuma.</p>'; return; }
+  const sorted=arr.slice().sort((a,b)=>new Date(a.iso)-new Date(b.iso));
+  const best=sorted[0];
+  results.innerHTML =
+    `<p><b>Najbolji pogodak:</b> ${fmtLocal(best.iso)} ${best.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}</p>`+
+    `<ul>`+sorted.map(x=>`<li><span class="tag">${x.text}</span> → ${fmtLocal(x.iso)} ${x.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}</li>`).join('')+`</ul>`;
+}
+
+// events
+view.addEventListener('mousedown', e=>{ const r=view.getBoundingClientRect(); sel.active=true; sel.x=Math.round(e.clientX-r.left); sel.y=Math.round(e.clientY-r.top); sel.w=0; sel.h=0; drawView(); });
+view.addEventListener('mousemove', e=>{ if(!sel.active) return; const r=view.getBoundingClientRect(); const x=Math.round(e.clientX-r.left), y=Math.round(e.clientY-r.top); sel.w=Math.max(0,x-sel.x); sel.h=Math.max(0,y-sel.y); drawView(); });
+window.addEventListener('mouseup', ()=>{ if(sel.active){ sel.active=false; document.getElementById('sel').textContent=`Selektirano: (${sel.x},${sel.y}) ${sel.w}×${sel.h}px`; } });
+
+rot.addEventListener('input', ()=>{ setLbl('rval',rot.value+'°'); drawView(); });
+scale.addEventListener('input', ()=>{ setLbl('sval',parseFloat(scale.value).toFixed(1)+'×'); drawView(); });
+blur.addEventListener('input', ()=> setLbl('bval',blur.value));
+blk.addEventListener('input', ()=> setLbl('blkval',blk.value));
+ac.addEventListener('input',  ()=> setLbl('acval',ac.value));
+mk.addEventListener('input',  ()=> setLbl('mkval',mk.value));
+pre.addEventListener('change', drawView);
+
+document.getElementById('ocrAll').onclick = async ()=>{ if(view.width>5&&view.height>5) await runOCR(view); };
+document.getElementById('ocrSel').onclick = async ()=>{ const c=cropSelection(); if(c) await runOCR(c); else log('Nema selekcije.'); };
+
+const showTxtBtn=document.getElementById('showTxt'), txtEl=document.getElementById('txt');
+showTxtBtn.onclick=()=> txtEl.style.display=(txtEl.style.display==='none'?'block':'none');
+
+// load file
+async function fileToImageOrPdfCanvas(file){
+  if (/\.pdf$/i.test(file.name)){
+    log('PDF → render 1. stranice…');
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    const page=await pdf.getPage(1);
+    const vp=page.getViewport({scale:1.8});
+    const c=document.createElement('canvas'); c.width=vp.width; c.height=vp.height;
+    await page.render({ canvasContext:c.getContext('2d'), viewport:vp }).promise;
+    basePdfCanvas=c; baseImg=null; return;
+  } else {
+    let blob=file;
+    if (/\.heic$/i.test(file.name)){ log('HEIC detektiran → JPG konverzija…'); blob=await heic2any({ blob:file, toType:"image/jpeg", quality:0.9 }); }
+    const url=URL.createObjectURL(blob); baseImg=new Image();
+    await new Promise((res,rej)=>{ baseImg.onload=()=>res(); baseImg.onerror=rej; baseImg.src=url; });
+    URL.revokeObjectURL(url); basePdfCanvas=null; return;
+  }
+}
+document.getElementById('file').addEventListener('change', async e=>{ const f=e.target.files[0]; if(f){ await fileToImageOrPdfCanvas(f); sel={x:0,y:0,w:0,h:0,active:false}; await ensureCV(); drawView(); } });
+
+const drop=document.getElementById('drop');
+drop.addEventListener('dragover', e=>{ e.preventDefault(); drop.style.background='#f5f5f5'; });
+drop.addEventListener('dragleave', ()=> { drop.style.background=''; });
+drop.addEventListener('drop', async e=>{ e.preventDefault(); drop.style.background=''; const f=e.dataTransfer.files[0]; if(f){ await fileToImageOrPdfCanvas(f); sel={x:0,y:0,w:0,h:0,active:false}; await ensureCV(); drawView(); } });
+
+// ---------- Tesseract & libs ----------
+</script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"></script>
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script src="https://unpkg.com/heic2any/dist/heic2any.min.js">async function ocrServer(canvas){
+  try{
+    const dataUrl = canvas.toDataURL('image/png');
+    log('Server OCR…');
+    const r = await fetch('/api/ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: dataUrl, psm: 11 })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Server OCR error');
+    document.getElementById('txt').textContent = j.text || '';
+    log('Server OCR gotovo. Duljina teksta: ' + (j.text ? j.text.length : 0));
+    showDates(j.dates || []);
+  }catch(e){
+    log('ERROR (server OCR): ' + (e && e.message ? e.message : e));
+  }
+}
+document.getElementById('ocrSrv').onclick = async ()=>{
+  const c = (typeof cropSelection === 'function' && cropSelection()) || document.getElementById('view');
+  if (!c) return log('Nema canvasa.');
+  await ocrServer(c);
+};
+</script>
+</body></html>
+
+

@@ -152,4 +152,43 @@ app.post("/admin/premium/grant", requireAdmin, (req,res)=>{
 app.get("/", (req,res)=> res.type("html").send(`<p>OK — <a href="/premium_status">/premium_status</a> | <a href="/premium_status_en">/premium_status_en</a> | <a href="/public/polish.html">polish</a> | <a href="/admin/manual.html">admin</a> | <a href="/debug/env">debug</a></p>`));
 
 console.log("Boot:", { SECRET_set: !!SECRET, ADMIN_KEY_len: ADMIN_KEY.length });
+const { createWorker } = require('tesseract.js');
+const { findAllDates } = require('./lib/ocr_mmm');
+
+let __ocrWorker = null;
+async function getOcrWorker(){
+  if (__ocrWorker) return __ocrWorker;
+  const w = await createWorker();
+  await w.loadLanguage('eng+hrv+ita');
+  await w.initialize('eng+hrv+ita');
+  __ocrWorker = w;
+  return __ocrWorker;
+}
+
+// --- OCR API (dataURL PNG/JPEG) ---
+app.post('/api/ocr', express.json({ limit: '12mb' }), async (req, res) => {
+  try{
+    const { image, psm = 11, whitelist = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz./-:" } = req.body || {};
+    if (!image || !/^data:image\/(png|jpeg);base64,/.test(image)) {
+      return res.status(400).json({ error: 'Bad image dataURL' });
+    }
+    const base64 = image.split(',')[1];
+    const buf = Buffer.from(base64, 'base64');
+
+    const worker = await getOcrWorker();
+    await worker.setParameters({
+      tessedit_pageseg_mode: String(psm),
+      tessedit_char_whitelist: whitelist
+    });
+
+    const { data } = await worker.recognize(buf);
+    const text = data.text || '';
+    const dates = findAllDates(text);
+    res.json({ ok:true, text, dates });
+  }catch(e){
+    console.error('OCR API error', e);
+    res.status(500).json({ error: e.message || 'OCR failed' });
+  }
+});
 app.listen(PORT, ()=> console.log(`✅ Server on http://127.0.0.1:${PORT}`));
+
