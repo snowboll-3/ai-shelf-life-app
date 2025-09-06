@@ -30,7 +30,7 @@
   <div id="dates">—</div>
   <div class="actions">
     <button id="copyDates">Kopiraj datume</button>
-    <button id="dlJson">Preuzmi datume (JSON)</button>
+    <button id="dlJson">Preuzmi datume (JSON)</button> <button id="dlTxt">Preuzmi datume (TXT)</button>
   </div>
   <h4>OCR tekst</h4>
   <div class="actions">
@@ -139,3 +139,4 @@ document.getElementById('dlJson').onclick = ()=>{
 window.addEventListener('error', e=>{ const msg=e?.message||e; const line=e?.lineno?(' @'+e.filename+':'+e.lineno):''; log('JS error: '+msg+line); });
 </script>
 </body></html>
+
