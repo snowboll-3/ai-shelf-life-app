@@ -8,14 +8,10 @@
     startCommand: "node server_safe.js"
     envVars:
       - key: SECRET
-        value: mrcina_one_secret_prod_change_me
+        value: mrcina_one_secret_prod_CHANGE_ME
       - key: ADMIN_KEY
         generateValue: true
       - key: NODE_ENV
         value: production
     healthCheckPath: "/"
     autoDeploy: true
-    disk:
-      name: data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
