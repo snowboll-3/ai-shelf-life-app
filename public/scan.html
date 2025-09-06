@@ -16,11 +16,13 @@
   .controls label{display:flex;gap:6px;align-items:center;background:#f6f8fa;border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px}
   .controls input[type="range"]{width:140px}
   #sel{margin-top:6px}
+  .actions button{margin-right:8px}
+  pre#txt{user-select:text}
 </style>
 </head>
 <body>
 <h2>📅 Scan datuma (OCR)</h2>
-<p class="card">Dodano: <b>OpenCV.js</b> pre-processing (Otsu/adaptive), <b>ručni crop</b>, <b>rotacija</b>, dvofazni OCR (normalni + “digits-only”). Parser: <b>MMM</b> (HR/EN/FR/IT) + <b>numerički</b> (DD.MM.YYYY, YYYY-MM-DD, <u>MM/YYYY</u> → kraj mjeseca).</p>
+<p class="card">OpenCV.js pre-processing (Otsu/adaptive), ručni crop, rotacija, dvofazni OCR (normalni + “digits-only”). Parser: <b>MMM</b> (HR/EN/FR/IT) + <b>numerički</b> (DD.MM.YYYY, YYYY-MM-DD, <u>MM/YYYY</u> → kraj mjeseca).</p>
 
 <div class="controls">
   <label>Rot <input id="rot" type="range" min="-45" max="45" step="1" value="0"><span id="rval">0°</span></label>
@@ -48,12 +50,25 @@
       <h3>Ulaz / Preview (selektiraj pravokutnik mišem)</h3>
       <canvas id="view" width="10" height="10"></canvas>
       <div id="sel" class="muted">Selektirano: (—)</div>
-      <p><button id="ocrAll">OCR cijele slike</button> <button id="ocrSel">OCR selekcije</button> <button id="ocrSrv">OCR (server)</button></p>
+      <p class="actions">
+        <button id="ocrAll">OCR cijele slike</button>
+        <button id="ocrSel">OCR selekcije</button>
+        <button id="ocrSrv">OCR (server)</button>
+      </p>
     </div>
   </div>
   <div class="col">
-    <div class="card"><h3>Rezultati</h3><div id="results"></div></div>
-    <p><button id="showTxt">Prikaži/Otpiši OCR tekst</button></p>
+    <div class="card"><h3>Rezultati</h3>
+      <div id="results"></div>
+      <p class="actions">
+        <button id="copyDates">Kopiraj datume (tekst)</button>
+        <button id="dlJson">Preuzmi datume (JSON)</button>
+      </p>
+    </div>
+    <p class="actions">
+      <button id="showTxt">Prikaži/Otpiši OCR tekst</button>
+      <button id="copyTxt">Kopiraj OCR tekst</button>
+    </p>
     <pre id="txt" style="display:none;background:#111;color:#9fe;padding:10px;border-radius:8px;max-height:260px;overflow:auto"></pre>
   </div>
 </div>
@@ -66,7 +81,7 @@
 const logEl = document.getElementById('log');
 const log = m => { logEl.textContent += (m + "\n"); console.log(m); };
 
-// ---------- MMM + numeric parser ----------
+// ---------- parser ----------
 function normalize(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(); }
 const ALIAS=new Map(); const A=(arr,n)=>arr.forEach(x=>ALIAS.set(normalize(x),n));
 // HR nominativi
@@ -111,11 +126,19 @@ return out;}
 function dedupe(arr){const seen=new Set(),out=[];for(const x of arr){const k=`${x.year}-${x.month}-${x.day}-${x.approx}`;if(seen.has(k))continue;seen.add(k);out.push(x);}return out;}
 function findAllDates(raw){return dedupe([...parseMMM(raw),...parseNumeric(raw)]);}
 
+// ---------- state ----------
+let lastOCRText = "";
+let lastDates = [];
+
 // ---------- canvasi + UI ----------
 const view=document.getElementById('view'), vctx=view.getContext('2d');
 let baseImg=null, basePdfCanvas=null;
 let sel={x:0,y:0,w:0,h:0,active:false};
-const rotEl=document.getElementById("rot"), scaleEl=document.getElementById("scale"), blurEl=document.getElementById("blur"), preEl=document.getElementById("pre"), blkEl=document.getElementById("blk"), cEl=document.getElementById("ac"), mkEl=document.getElementById("mk");
+
+const rotEl=document.getElementById("rot"), scaleEl=document.getElementById("scale"),
+      blurEl=document.getElementById("blur"), preEl=document.getElementById("pre"),
+      blkEl=document.getElementById("blk"), cEl=document.getElementById("ac"), mkEl=document.getElementById("mk");
+
 const setLbl=(id,v)=>document.getElementById(id).textContent=v;
 
 function imgToCanvas(img,scale=2.2){const c=document.createElement('canvas');c.width=Math.round(img.naturalWidth*scale);c.height=Math.round(img.naturalHeight*scale);c.getContext('2d').drawImage(img,0,0,c.width,c.height);return c;}
@@ -183,7 +206,38 @@ function cropSelection(){
   return c;
 }
 
-// OCR helpers
+// ---------- copy/download helpers ----------
+async function copyText(s){
+  try{
+    if (navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(s);
+    }else{
+      const ta=document.createElement('textarea');
+      ta.value=s; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
+    log('Kopirano u međuspremnik.');
+  }catch(e){ log('ERROR copy: '+(e?.message||e)); }
+}
+function downloadJSON(obj, name){
+  const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ---------- results ----------
+const results=document.getElementById('results');
+function fmtLocal(d){ return new Date(d).toLocaleString('hr-HR',{timeZone:'Europe/Zagreb'}); }
+function showDates(arr){
+  lastDates = Array.isArray(arr) ? arr.slice() : [];
+  results.innerHTML='';
+  if (!arr.length){ results.innerHTML='<p>Nema prepoznatih datuma.</p>'; return; }
+  const sorted=arr.slice().sort((a,b)=>new Date(a.iso)-new Date(b.iso));
+  const best=sorted[0];
+  results.innerHTML =
+    `<p><b>Najbolji pogodak:</b> ${fmtLocal(best.iso)} ${best.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}</p>`+
+    `<ul>`+sorted.map(x=>`<li><span class="tag">${x.text}</span> → ${fmtLocal(x.iso)} ${x.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}</li>`).join('')+`</ul>`;
+}
+
+// ---------- OCR helpers ----------
 async function ocrWithWorker(canvas, {langs, psm, whitelist}){
   const { createWorker } = Tesseract;
   const w = await createWorker();
@@ -194,6 +248,7 @@ async function ocrWithWorker(canvas, {langs, psm, whitelist}){
   return data.text || '';
 }
 
+// ---------- OCR flows ----------
 async function runOCR(canvas){
   log('OCR A (eng+hrv+ita, PSM 11)…');
   let allText = await ocrWithWorker(canvas, { langs:'eng+hrv+ita', psm:11, whitelist:"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz./-:" });
@@ -202,6 +257,7 @@ async function runOCR(canvas){
     const t2 = await ocrWithWorker(canvas, { langs:'eng+hrv+ita', psm:7, whitelist:"0123456789./-" });
     allText += "\n" + t2;
   }
+  lastOCRText = allText;
   document.getElementById('txt').textContent = allText;
   log('OCR gotovo. Duljina teksta: '+allText.length);
   const dates = findAllDates(allText);
@@ -209,36 +265,58 @@ async function runOCR(canvas){
   showDates(dates);
 }
 
-const results=document.getElementById('results');
-function fmtLocal(d){ return new Date(d).toLocaleString('hr-HR',{timeZone:'Europe/Zagreb'}); }
-function showDates(arr){
-  results.innerHTML='';
-  if (!arr.length){ results.innerHTML='<p>Nema prepoznatih datuma.</p>'; return; }
-  const sorted=arr.slice().sort((a,b)=>new Date(a.iso)-new Date(b.iso));
-  const best=sorted[0];
-  results.innerHTML =
-    `<p><b>Najbolji pogodak:</b> ${fmtLocal(best.iso)} ${best.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}</p>`+
-    `<ul>`+sorted.map(x=>`<li><span class="tag">${x.text}</span> → ${fmtLocal(x.iso)} ${x.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}</li>`).join('')+`</ul>`;
+async function ocrServer(canvas){
+  try{
+    const dataUrl = canvas.toDataURL('image/png');
+    log('Server OCR…');
+    const r = await fetch('/api/ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: dataUrl, psm: 11 })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Server OCR error');
+    lastOCRText = j.text || '';
+    document.getElementById('txt').textContent = lastOCRText;
+    log('Server OCR gotovo. Duljina teksta: ' + (lastOCRText ? lastOCRText.length : 0));
+    showDates(j.dates || []);
+  }catch(e){ log('ERROR (server OCR): ' + (e?.message || e)); }
 }
 
-// events
-view.addEventListener('mousedown', e=>{ const r=view.getBoundingClientRect(); sel.active=true; sel.x=Math.round(e.clientX-r.left); sel.y=Math.round(e.clientY-r.top); sel.w=0; sel.h=0; drawView(); });
-view.addEventListener('mousemove', e=>{ if(!sel.active) return; const r=view.getBoundingClientRect(); const x=Math.round(e.clientX-r.left), y=Math.round(e.clientY-r.top); sel.w=Math.max(0,x-sel.x); sel.h=Math.max(0,y-sel.y); drawView(); });
+// ---------- events ----------
+const viewEl = document.getElementById('view');
+viewEl.addEventListener('mousedown', e=>{ const r=view.getBoundingClientRect(); sel.active=true; sel.x=Math.round(e.clientX-r.left); sel.y=Math.round(e.clientY-r.top); sel.w=0; sel.h=0; drawView(); });
+viewEl.addEventListener('mousemove', e=>{ if(!sel.active) return; const r=view.getBoundingClientRect(); const x=Math.round(e.clientX-r.left), y=Math.round(e.clientY-r.top); sel.w=Math.max(0,x-sel.x); sel.h=Math.max(0,y-sel.y); drawView(); });
 window.addEventListener('mouseup', ()=>{ if(sel.active){ sel.active=false; document.getElementById('sel').textContent=`Selektirano: (${sel.x},${sel.y}) ${sel.w}×${sel.h}px`; } });
 
-rot.addEventListener('input', ()=>{ setLbl('rval',rot.value+'°'); drawView(); });
-scale.addEventListener('input', ()=>{ setLbl('sval',parseFloat(scale.value).toFixed(1)+'×'); drawView(); });
-blur.addEventListener('input', ()=> setLbl('bval',blur.value));
-blk.addEventListener('input', ()=> setLbl('blkval',blk.value));
-ac.addEventListener('input',  ()=> setLbl('acval',ac.value));
-mk.addEventListener('input',  ()=> setLbl('mkval',mk.value));
-pre.addEventListener('change', drawView);
+rotEl.addEventListener('input', ()=>{ setLbl('rval',rot.value+'°'); drawView(); });
+scaleEl.addEventListener('input', ()=>{ setLbl('sval',parseFloat(scale.value).toFixed(1)+'×'); drawView(); });
+blurEl.addEventListener('input', ()=> setLbl('bval',blur.value));
+blkEl.addEventListener('input', ()=> setLbl('blkval',blk.value));
+cEl.addEventListener('input',  ()=> setLbl('acval',ac.value));
+mkEl.addEventListener('input',  ()=> setLbl('mkval',mk.value));
+preEl.addEventListener('change', drawView);
 
 document.getElementById('ocrAll').onclick = async ()=>{ if(view.width>5&&view.height>5) await runOCR(view); };
 document.getElementById('ocrSel').onclick = async ()=>{ const c=cropSelection(); if(c) await runOCR(c); else log('Nema selekcije.'); };
+document.getElementById('ocrSrv').onclick = async ()=>{ const c=cropSelection()||view; if(c) await ocrServer(c); else log('Nema canvasa.'); };
 
 const showTxtBtn=document.getElementById('showTxt'), txtEl=document.getElementById('txt');
 showTxtBtn.onclick=()=> txtEl.style.display=(txtEl.style.display==='none'?'block':'none');
+
+document.getElementById('copyTxt').onclick = ()=> copyText(lastOCRText || document.getElementById('txt').textContent || '');
+document.getElementById('copyDates').onclick = ()=>{
+  if (!lastDates.length) return log('Nema datuma za kopiranje.');
+  const lines = lastDates
+    .slice()
+    .sort((a,b)=> new Date(a.iso)-new Date(b.iso))
+    .map(x=> `${x.text} → ${new Date(x.iso).toLocaleString('hr-HR',{timeZone:'Europe/Zagreb'})}${x.approx?' (≈ kraj mjeseca)':''}`);
+  copyText(lines.join('\n'));
+};
+document.getElementById('dlJson').onclick = ()=>{
+  const payload = { dates:lastDates, ocrLength:lastOCRText.length||0, when:new Date().toISOString() };
+  downloadJSON(payload, 'ocr_dates.json');
+};
 
 // load file
 async function fileToImageOrPdfCanvas(file){
@@ -266,35 +344,14 @@ drop.addEventListener('dragover', e=>{ e.preventDefault(); drop.style.background
 drop.addEventListener('dragleave', ()=> { drop.style.background=''; });
 drop.addEventListener('drop', async e=>{ e.preventDefault(); drop.style.background=''; const f=e.dataTransfer.files[0]; if(f){ await fileToImageOrPdfCanvas(f); sel={x:0,y:0,w:0,h:0,active:false}; await ensureCV(); drawView(); } });
 
-// ---------- Tesseract & libs ----------
+window.addEventListener('error', e=>{ const msg = (e && e.message) ? e.message : e; const line = (e && e.lineno) ? (' @'+e.filename+':'+e.lineno) : ''; const el=document.getElementById('log'); if(el) el.textContent += 'JS error: '+msg+line+
+; console.error('JS error:', e); });
+// libs
 </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"></script>
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-<script src="https://unpkg.com/heic2any/dist/heic2any.min.js">async function ocrServer(canvas){
-  try{
-    const dataUrl = canvas.toDataURL('image/png');
-    log('Server OCR…');
-    const r = await fetch('/api/ocr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: dataUrl, psm: 11 })
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error || 'Server OCR error');
-    document.getElementById('txt').textContent = j.text || '';
-    log('Server OCR gotovo. Duljina teksta: ' + (j.text ? j.text.length : 0));
-    showDates(j.dates || []);
-  }catch(e){
-    log('ERROR (server OCR): ' + (e && e.message ? e.message : e));
-  }
-}
-document.getElementById('ocrSrv').onclick = async ()=>{
-  const c = (typeof cropSelection === 'function' && cropSelection()) || document.getElementById('view');
-  if (!c) return log('Nema canvasa.');
-  await ocrServer(c);
-};
-</script>
+<script src="https://unpkg.com/heic2any/dist/heic2any.min.js"></script>
 </body></html>
 
 
