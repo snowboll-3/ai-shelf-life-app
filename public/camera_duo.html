@@ -9,8 +9,7 @@
   video{width:100%;height:auto;max-height:70vh;background:#000;border:1px solid #ddd;border-radius:12px;margin-top:12px}
   h3{margin-top:18px}
   #log{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;background:#0b1020;color:#e6edf3;padding:10px;border-radius:8px;min-height:80px}
-  .ok{color:#22c55e;font-weight:700}
-  .muted{opacity:.7}
+  .ok{color:#22c55e;font-weight:700}.muted{opacity:.7}
 </style>
 
 <h2>📷 Camera</h2>
@@ -37,139 +36,84 @@
   var ULcodes=document.getElementById("codes");
   var ULdates=document.getElementById("dates");
   var PREtxt=document.getElementById("txt");
-  var codeReader=null, stream=null;
-  var seen=new Set(), lastAt=0;
+  var codeReader=null, stream=null, seen=new Set(), lastAt=0;
 
-  function log(m){ if(L) L.textContent += m + "\\n"; console.log(m); }
-  function stopAll(){
-    try{ if (codeReader && codeReader.reset) codeReader.reset(); }catch(e){}
-    try{ if (stream) stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
-    stream=null; v.srcObject=null; log("STOP");
-  }
+  function log(m){ if(L) L.textContent += m + "\n"; console.log(m); }
+  function stopAll(){ try{ if(codeReader&&codeReader.reset) codeReader.reset(); }catch(e){} try{ if(stream) stream.getTracks().forEach(function(t){t.stop();}); }catch(e){} stream=null; v.srcObject=null; log("STOP"); }
 
-  // ===== BARCODE =====
+  // ========== BARCODE ==========
   async function startBarcode(){
     try{
-      if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
+      if(!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
       log("ZXing start…");
       codeReader.decodeFromVideoDevice(null, v, function(result, err){
-        if (result){
-          var txt=result.getText(); var fmt=result.getBarcodeFormat(); var now=Date.now();
-          if (!seen.has(txt) || now-lastAt>1500){
+        if(result){
+          var txt=result.getText(), fmt=result.getBarcodeFormat(), now=Date.now();
+          if(!seen.has(txt) || now-lastAt>1500){
             seen.add(txt); lastAt=now;
             var li=document.createElement("li");
-            li.innerHTML="<span class=\\"ok\\">✓</span> "+txt+" <span class=\\"muted\\">("+fmt+")</span>";
+            li.innerHTML="<span class=\"ok\">✓</span> "+txt+" <span class=\"muted\">("+fmt+")</span>";
             ULcodes.prepend(li);
           }
         }
       });
-      v.onplaying = function(){ log("VIDEO playing "+v.videoWidth+"x"+v.videoHeight); };
-      v.onloadedmetadata = function(){ log("metadata "+v.videoWidth+"x"+v.videoHeight); };
-    }catch(e){
-      alert("Bar-code greška: "+(e.message||e));
-      log("ZXing error: "+(e.name||"")+" "+(e.message||e));
-    }
+      v.onplaying=function(){ log("VIDEO "+v.videoWidth+"x"+v.videoHeight); };
+      v.onloadedmetadata=function(){ log("META "+v.videoWidth+"x"+v.videoHeight); };
+    }catch(e){ alert("Bar-code greška: "+(e.message||e)); log("ZXing error: "+(e.name||"")+" "+(e.message||e)); }
   }
 
-  // ===== DATE OCR =====
-  function normalize(s){ return (s||"").normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toUpperCase(); }
-  var ALIAS=new Map(); var A=function(arr,n){ arr.forEach(function(x){ ALIAS.set(normalize(x),n); }); };
-  // HR
-  A(["SIJ","SIJECANJ"],1); A(["VEL","VELJACA","VELJ"],2); A(["OZU","OZUJAK","OZUJ"],3);
-  A(["TRA","TRAVANJ"],4); A(["SVI","SVIBANJ"],5); A(["LIP","LIPANJ"],6);
-  A(["SRP","SRPANJ"],7); A(["KOL","KOLOVOZ"],8); A(["RUJ","RUJAN"],9);
-  A(["LIS","LISTOPAD"],10); A(["STU","STUDENI"],11); A(["PRO","PROSINAC"],12);
-  // EN
-  A(["JAN","JANUARY"],1); A(["FEB","FEBRUARY"],2); A(["MAR","MARCH"],3);
-  A(["APR","APRIL"],4); A(["MAY"],5); A(["JUN","JUNE"],6); A(["JUL","JULY"],7);
-  A(["AUG","AUGUST"],8); A(["SEP","SEPT","SEPTEMBER"],9); A(["OCT","OCTOBER"],10);
-  A(["NOV","NOVEMBER"],11); A(["DEC","DECEMBER"],12);
-  // FR
-  A(["JANV","JAN"],1); A(["FEVR","FEV","FEVR"],2); A(["MARS","MAR"],3); A(["AVR"],4); A(["MAI"],5);
-  A(["JUIN"],6); A(["JUIL"],7); A(["AOUT","AOUT"],8); A(["SEPT"],9); A(["OCT"],10); A(["NOV"],11); A(["DEC","DEC"],12);
-  // IT
-  A(["GEN","GENNAIO"],1); A(["FEB","FEBBRAIO"],2); A(["MAR","MARZO"],3); A(["APR","APRILE"],4); A(["MAG","MAGGIO"],5);
-  A(["GIU","GIUGNO"],6); A(["LUG","LUGLIO"],7); A(["AGO","AGOSTO"],8); A(["SET","SETTEMBRE"],9); A(["OTT","OTTOBRE"],10);
-  A(["NOV","NOVEMBRE"],11); A(["DIC","DICEMBRE"],12);
-
-  function esc(s){ return s.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&"); }
-  var MONTH_TOKEN=Array.from(ALIAS.keys()).sort(function(a,b){return b.length-a.length;}).map(esc).join("|");
-  var SEP="[\\s.,/\\-]+";
-  var P1=new RegExp("\\\\b(?<d>\\\\d{1,2})"+SEP+"(?<m>"+MONTH_TOKEN+")"+SEP+"(?<y>\\\\d{2,4})\\\\b","g");
-  var P2=new RegExp("\\\\b(?<m>"+MONTH_TOKEN+")"+SEP+"(?<d>\\\\d{1,2})(?!\\\\d)"+SEP+"(?<y>\\\\d{2,4})\\\\b","g");
-  var RX_DMY=/\\b(?<d>0?[1-9]|[12]\\d|3[01])[.\\-\\/ ](?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<y>\\d{4}|\\d{2})\\b/g;
-  var RX_YMD=/\\b(?<y>\\d{4})[.\\-\\/ ](?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<d>0?[1-9]|[12]\\d|3[01])\\b/g;
-  var RX_MY=/\\b(?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<y>\\d{4})\\b/g;
+  // ========== DATE OCR ==========
+  function normalize(s){ return (s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase(); }
+  var ALIAS=new Map(), A=function(arr,n){ arr.forEach(function(x){ ALIAS.set(normalize(x),n); }); };
+  A(["SIJ","SIJECANJ"],1);A(["VEL","VELJACA","VELJ"],2);A(["OZU","OZUJAK","OZUJ"],3);A(["TRA","TRAVANJ"],4);A(["SVI","SVIBANJ"],5);A(["LIP","LIPANJ"],6);
+  A(["SRP","SRPANJ"],7);A(["KOL","KOLOVOZ"],8);A(["RUJ","RUJAN"],9);A(["LIS","LISTOPAD"],10);A(["STU","STUDENI"],11);A(["PRO","PROSINAC"],12);
+  A(["JAN","JANUARY"],1);A(["FEB","FEBRUARY"],2);A(["MAR","MARCH"],3);A(["APR","APRIL"],4);A(["MAY"],5);A(["JUN","JUNE"],6);A(["JUL","JULY"],7);
+  A(["AUG","AUGUST"],8);A(["SEP","SEPT","SEPTEMBER"],9);A(["OCT","OCTOBER"],10);A(["NOV","NOVEMBER"],11);A(["DEC","DECEMBER"],12);
+  A(["JANV","JAN"],1);A(["FEVR","FEV","FEVR"],2);A(["MARS","MAR"],3);A(["AVR"],4);A(["MAI"],5);A(["JUIN"],6);A(["JUIL"],7);A(["AOUT","AOUT"],8);A(["SEPT"],9);A(["OCT"],10);A(["NOV"],11);A(["DEC","DEC"],12);
+  A(["GEN","GENNAIO"],1);A(["FEB","FEBBRAIO"],2);A(["MAR","MARZO"],3);A(["APR","APRILE"],4);A(["MAG","MAGGIO"],5);A(["GIU","GIUGNO"],6);A(["LUG","LUGLIO"],7);A(["AGO","AGOSTO"],8);A(["SET","SETTEMBRE"],9);A(["OTT","OTTOBRE"],10);A(["NOV","NOVEMBRE"],11);A(["DIC","DICEMBRE"],12);
+  function esc(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); }
+  var MONTH=Array.from(ALIAS.keys()).sort(function(a,b){return b.length-a.length;}).map(esc).join("|");
+  var SEP="[\\s.,/\\-]+"; var P1=new RegExp("\\b(?<d>\\d{1,2})"+SEP+"(?<m>"+MONTH+")"+SEP+"(?<y>\\d{2,4})\\b","g");
+  var P2=new RegExp("\\b(?<m>"+MONTH+")"+SEP+"(?<d>\\d{1,2})(?!\\d)"+SEP+"(?<y>\\d{2,4})\\b","g");
+  var RX_DMY=/\b(?<d>0?[1-9]|[12]\d|3[01])[.\-\/ ](?<m>0?[1-9]|1[0-2])[.\-\/ ](?<y>\d{4}|\d{2})\b/g;
+  var RX_YMD=/\b(?<y>\d{4})[.\-\/ ](?<m>0?[1-9]|1[0-2])[.\-\/ ](?<d>0?[1-9]|[12]\d|3[01])\b/g;
+  var RX_MY=/\b(?<m>0?[1-9]|1[0-2])[.\-\/ ](?<y>\d{4})\b/g;
   function toYear(y){ y=parseInt(y,10); return y<100?2000+y:y; }
-  function valid(y,m,d){ var dt=new Date(y,m-1,d); return dt.getFullYear()==y && dt.getMonth()==m-1 && dt.getDate()==d; }
+  function valid(y,m,d){ var dt=new Date(y,m-1,d); return dt.getFullYear()==y&&dt.getMonth()==m-1&&dt.getDate()==d; }
   function lastDay(y,m){ return new Date(y,m,0).getDate(); }
-  function parseMMM(raw){
-    var nd=normalize(raw), out=[], m;
-    [P1,P2].forEach(function(rx){
-      rx.lastIndex=0; while ((m=rx.exec(nd))){
-        var d=parseInt(m.groups.d,10), mo=ALIAS.get(m.groups.m), y=toYear(m.groups.y);
-        if(!mo || !valid(y,mo,d)) continue;
-        out.push({text:m[0], day:d, month:mo, year:y, iso:new Date(y,mo-1,d).toISOString(), approx:false});
-      }
-    });
-    return out;
-  }
-  function parseNumeric(raw){
-    var out=[], m;
-    RX_DMY.lastIndex=0; while ((m=RX_DMY.exec(raw))){ var d=parseInt(m.groups.d,10), mo=parseInt(m.groups.m,10), y=toYear(m.groups.y); if(!valid(y,mo,d)) continue; out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false}); }
-    RX_YMD.lastIndex=0; while ((m=RX_YMD.exec(raw))){ var d2=parseInt(m.groups.d,10), mo2=parseInt(m.groups.m,10), y2=parseInt(m.groups.y,10); if(!valid(y2,mo2,d2)) continue; out.push({text:m[0],day:d2,month:mo2,year:y2,iso:new Date(y2,mo2-1,d2).toISOString(),approx:false}); }
-    RX_MY.lastIndex=0; while ((m=RX_MY.exec(raw))){ var mo3=parseInt(m.groups.m,10), y3=parseInt(m.groups.y,10); var d3=lastDay(y3,mo3); out.push({text:m[0],day:d3,month:mo3,year:y3,iso:new Date(y3,mo3-1,d3).toISOString(),approx:true}); }
-    return out;
-  }
-  function dedupe(arr){ var s=new Set(), o=[]; arr.forEach(function(x){ var k=x.year+"-"+x.month+"-"+x.day+"-"+x.approx; if(!s.has(k)){ s.add(k); o.push(x);} }); return o; }
-  function findAllDates(raw){ return dedupe([].concat(parseMMM(raw), parseNumeric(raw))); }
-  function fmtLocal(iso){ try{ return new Date(iso).toLocaleString("hr-HR",{timeZone:"Europe/Zagreb"}); }catch(_){ return iso; } }
+  function parseMMM(t){ var nd=normalize(t),out=[],m; [P1,P2].forEach(function(rx){ rx.lastIndex=0; while((m=rx.exec(nd))){ var d=parseInt(m.groups.d,10),mo=ALIAS.get(m.groups.m),y=toYear(m.groups.y); if(!mo||!valid(y,mo,d))continue; out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false}); }}); return out; }
+  function parseNum(t){ var out=[],m; RX_DMY.lastIndex=0; while((m=RX_DMY.exec(t))){ var d=parseInt(m.groups.d,10),mo=parseInt(m.groups.m,10),y=toYear(m.groups.y); if(valid(y,mo,d)) out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false}); }
+    RX_YMD.lastIndex=0; while((m=RX_YMD.exec(t))){ var d2=parseInt(m.groups.d,10),mo2=parseInt(m.groups.m,10),y2=parseInt(m.groups.y,10); if(valid(y2,mo2,d2)) out.push({text:m[0],day:d2,month:mo2,year:y2,iso:new Date(y2,mo2-1,d2).toISOString(),approx:false}); }
+    RX_MY.lastIndex=0; while((m=RX_MY.exec(t))){ var mo3=parseInt(m.groups.m,10),y3=parseInt(m.groups.y,10),d3=lastDay(y3,mo3); out.push({text:m[0],day:d3,month:mo3,year:y3,iso:new Date(y3,mo3-1,d3).toISOString(),approx:true}); }
+    return out; }
+  function dedupe(a){ var s=new Set(),o=[]; a.forEach(function(x){ var k=x.year+"-"+x.month+"-"+x.day+"-"+x.approx; if(!s.has(k)){ s.add(k); o.push(x);} }); return o; }
+  function findAllDates(t){ return dedupe([].concat(parseMMM(t),parseNum(t))); }
+  function fmt(iso){ try{ return new Date(iso).toLocaleString("hr-HR",{timeZone:"Europe/Zagreb"});}catch(_){return iso;} }
 
   async function dateScan(){
     try{
-      // ako video ne radi, upali ga RAW-om
-      if (!v.srcObject){
+      if(!v.srcObject){
         try{ await navigator.mediaDevices.getUserMedia({video:true}); }catch(_){}
-        var cons={ video:{ facingMode:{ ideal:"environment" }, width:{ideal:1280}, height:{ideal:720} }, audio:false };
-        var s=await navigator.mediaDevices.getUserMedia(cons);
-        stream=s; v.srcObject=s; v.muted=true; v.setAttribute("playsinline",""); await v.play();
+        var cons={video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false};
+        var s=await navigator.mediaDevices.getUserMedia(cons); stream=s; v.srcObject=s; v.muted=true; v.setAttribute("playsinline",""); await v.play();
       }
-      // snimi frame
-      var w=v.videoWidth||1280, h=v.videoHeight||720;
-      var cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+      var w=v.videoWidth||1280,h=v.videoHeight||720,cv=document.createElement("canvas"); cv.width=w; cv.height=h;
       var ctx=cv.getContext("2d"); ctx.drawImage(v,0,0,w,h);
-      // blago poboljšaj kontrast
-      var img=ctx.getImageData(0,0,w,h), d=img.data;
-      for(var i=0;i<d.length;i+=4){ var Y=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0; var t=Y>160?255: (Y<80?0:Y); d[i]=d[i+1]=d[i+2]=t; }
-      ctx.putImageData(img,0,0);
-
+      var img=ctx.getImageData(0,0,w,h),d=img.data; for(var i=0;i<d.length;i+=4){ var Y=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0; var t=Y>160?255:(Y<80?0:Y); d[i]=d[i+1]=d[i+2]=t; } ctx.putImageData(img,0,0);
       log("OCR start…");
-      var worker = await Tesseract.createWorker("eng+hrv+ita");
-      var res = await worker.recognize(cv);
-      await worker.terminate();
-
-      var text = (res && res.data && res.data.text) ? res.data.text : "";
-      PREtxt.textContent = text;
-      var dates = findAllDates(text);
-      ULdates.innerHTML = dates.length? "" : "<li class=\\"muted\\">Nema prepoznatih datuma.</li>";
-      dates.sort(function(a,b){ return new Date(a.iso) - new Date(b.iso); }).forEach(function(x){
-        var li=document.createElement("li");
-        li.textContent = x.text + " → " + fmtLocal(x.iso) + (x.approx? " (≈ kraj mjeseca)" : "");
-        ULdates.appendChild(li);
-      });
-      log("OCR gotovo. Duljina teksta: "+text.length+" | datuma: "+dates.length);
-    }catch(e){
-      alert("Datum skener greška: "+(e.message||e));
-      log("OCR error: "+(e.name||"")+" "+(e.message||e));
-    }
+      var worker=await Tesseract.createWorker("eng+hrv+ita"); var res=await worker.recognize(cv); await worker.terminate();
+      var text=(res&&res.data&&res.data.text)?res.data.text:""; PREtxt.textContent=text;
+      var dates=findAllDates(text); ULdates.innerHTML=dates.length?"":"<li class=\"muted\">Nema prepoznatih datuma.</li>";
+      dates.sort(function(a,b){return new Date(a.iso)-new Date(b.iso);}).forEach(function(x){ var li=document.createElement("li"); li.textContent=x.text+" \u2192 "+fmt(x.iso)+(x.approx?" (\u2248 kraj mjeseca)":""); ULdates.appendChild(li); });
+      log("OCR gotovo. textLen="+text.length+" datumi="+dates.length);
+    }catch(e){ alert("Datum skener greška: "+(e.message||e)); log("OCR error: "+(e.name||"")+" "+(e.message||e)); }
   }
 
-  document.getElementById("btnBarcode").onclick = function(){ stopAll(); startBarcode(); };
-  document.getElementById("btnDate").onclick    = function(){ dateScan(); };
-  document.getElementById("btnStop").onclick    = function(){ stopAll(); };
+  document.getElementById("btnBarcode").onclick=function(){ stopAll(); startBarcode(); };
+  document.getElementById("btnDate").onclick=function(){ dateScan(); };
+  document.getElementById("btnStop").onclick=function(){ stopAll(); };
 })();
 </script>
 
-<!-- Libs -->
 <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
