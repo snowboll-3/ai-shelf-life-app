@@ -10,7 +10,7 @@
   .col{flex:1 1 520px}
   .card{border:1px solid #e5e7eb;border-radius:12px;padding:12px}
   video,canvas{max-width:100%;border-radius:12px;border:1px solid #e5e7eb;background:#000}
-  #overlay{position:absolute;left:0;top:0;pointer-events:auto}
+  #overlay{position:absolute;left:0;top:0;pointer-events:auto;background:transparent !important;border:0 !important}
   .ok{color:#16a34a;font-weight:600}
   .bad{color:#dc2626}
   .tag{display:inline-block;padding:2px 8px;border-radius:9999px;background:#2563eb;color:#fff;font-weight:600}
@@ -31,7 +31,7 @@
       <video id="v" playsinline muted></video>
       <canvas id="overlay"></canvas>
       <p style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-        <button id="btnStart">Start kamera</button>
+        <button id="btnStart">Start kamera</button> <button id="btnStartZX" class="secondary">Start (ZXing)</button> <select id="camSel" style="min-width:200px"></select>
         <button id="btnStop" class="secondary">Stop</button>
         <button id="btnOCR" class="secondary">OCR frame</button>
         <button id="btnOCRroi" class="secondary">OCR ROI (pravokutnik)</button>
@@ -76,7 +76,7 @@ const v = document.getElementById('v');
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 const ov = document.getElementById('overlay');
-const octx = ov.getContext('2d');
+const octx = ov.getContext('2d'); ov.style.background='transparent'; ov.style.border='0';
 const codesUL = document.getElementById('codes');
 const datesBox = document.getElementById('dates');
 const ocrTxt = document.getElementById('ocrTxt');
@@ -309,5 +309,58 @@ document.getElementById('dlDates').onclick = ()=>{
 // JS error hook
 window.addEventListener('error', e=>{ const msg=e?.message||e; const line=e?.lineno?(' @'+e.filename+':'+e.lineno):''; log('JS error: '+msg+line); });
 </script>
+<script>
+(function(){
+  async function startZX(){
+    try{
+      if (!window.codeReader) window.codeReader = new ZXing.BrowserMultiFormatReader();
+      // napuni select kamera (ako moguće)
+      try{
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices){
+          const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+          const sel = document.getElementById("camSel");
+          if (sel){ sel.innerHTML=""; cams.forEach((c,i)=>{ const o=document.createElement("option"); o.value=c.deviceId; o.textContent=c.label||("Kamera "+(i+1)); sel.appendChild(o); }); }
+        }
+      }catch(e){ log("enumerateDevices: "+(e.message||e)); }
+
+      const sel = document.getElementById("camSel");
+      const deviceId = (sel && sel.value) ? sel.value : undefined;
+
+      log("ZXing start, deviceId="+(deviceId||"default"));
+      codeReader.decodeFromVideoDevice(deviceId, v, function(result, err){
+        if (result){
+          const txt = result.getText();
+          const fmt = result.getBarcodeFormat();
+          const now = Date.now();
+          if (!codeSeen.has(txt) || now - lastCodeAt > 2000) {
+            codeSeen.add(txt); lastCodeAt = now;
+            const li = document.createElement("li");
+            li.innerHTML = "<span class=\\"ok\\">✓</span> " + txt + " <span class=\\"muted\\">(" + fmt + ")</span>";
+            codesUL.prepend(li);
+            lastCodeTxt = txt; lastCodeFmt = fmt;
+          }
+        }
+      });
+
+      v.onplaying = function(){ log("VIDEO playing " + v.videoWidth + "x" + v.videoHeight); fitOverlay(); };
+      v.onloadedmetadata = function(){ log("loadedmetadata " + v.videoWidth + "x" + v.videoHeight); fitOverlay(); };
+    }catch(e){
+      alert("ZXing kamera greška: " + (e.message||e));
+      log("ZXing kamera greška: " + (e.name||"") + " " + (e.message||e));
+    }
+  }
+  function stopAll(){
+    try{ if (window.codeReader) codeReader.reset(); }catch(e){}
+    try{ if (v.srcObject) v.srcObject.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+    currentStream = null; v.srcObject = null;
+    log("Stop (ZXing + tracks).");
+  }
+  var btnZX = document.getElementById("btnStartZX");
+  if (btnZX) btnZX.onclick = startZX;
+  var btnStop = document.getElementById("btnStop");
+  if (btnStop) btnStop.onclick = stopAll;
+})();
+</script>
 </body>
 </html>
+
