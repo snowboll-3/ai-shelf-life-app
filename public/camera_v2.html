@@ -3,34 +3,39 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>AI Shelf-Life – Camera</title>
+<title>AI Shelf-Life – Camera v2</title>
 <style>
-  body{font:15px system-ui;margin:0;padding:16px;max-width:980px}
+  body{font:15px system-ui;margin:0;padding:16px;max-width:1060px}
   .row{display:flex;gap:16px;flex-wrap:wrap}
-  .col{flex:1 1 420px}
+  .col{flex:1 1 520px}
   .card{border:1px solid #e5e7eb;border-radius:12px;padding:12px}
-  video,canvas{max-width:100%;border-radius:12px;border:1px solid #e5e7eb}
+  video,canvas{max-width:100%;border-radius:12px;border:1px solid #e5e7eb;background:#000}
+  #overlay{position:absolute;left:0;top:0;pointer-events:auto}
   .ok{color:#16a34a;font-weight:600}
   .bad{color:#dc2626}
   .tag{display:inline-block;padding:2px 8px;border-radius:9999px;background:#2563eb;color:#fff;font-weight:600}
+  .muted{opacity:.7}
   #log{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;background:#0b1020;color:#e6edf3;padding:10px;border-radius:8px;min-height:120px}
   button{padding:8px 12px;border:0;border-radius:10px;background:#2563eb;color:#fff;cursor:pointer}
   button.secondary{background:#6b7280}
-  .muted{opacity:.7}
+  label{display:inline-flex;gap:8px;align-items:center}
 </style>
 </head>
 <body>
-<h2>📷 Camera skener (bar-kod + datum OCR)</h2>
-<p class="card">Klikni <b>Start kamera</b> → usmjeri na bar-kod ili datum na ambalaži. <br/>Ako bar-kod ne uhvati, klikni <b>OCR frame</b> za čitanje teksta i detekciju datuma.</p>
+<h2>📷 Camera skener (bar-kod + datum OCR, ROI)</h2>
+<p class="card">Start kamera → uperi na kod ili datum. Mišem/touchom <b>nacrtaj pravokutnik</b> preko datuma → <b>OCR ROI</b>.</p>
 
 <div class="row">
   <div class="col">
-    <div class="card">
+    <div class="card" style="position:relative">
       <video id="v" playsinline muted></video>
-      <p>
+      <canvas id="overlay"></canvas>
+      <p style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
         <button id="btnStart">Start kamera</button>
         <button id="btnStop" class="secondary">Stop</button>
-        <button id="btnOCR" class="secondary">OCR frame (datum)</button>
+        <button id="btnOCR" class="secondary">OCR frame</button>
+        <button id="btnOCRroi" class="secondary">OCR ROI (pravokutnik)</button>
+        <label class="secondary"><input type="checkbox" id="pp" checked/> Preprocessing</label>
       </p>
       <canvas id="cv" width="10" height="10" style="display:none"></canvas>
     </div>
@@ -43,10 +48,13 @@
     <div class="card">
       <h3>Datumi (OCR)</h3>
       <div id="dates">—</div>
-      <p><button id="copyDates" class="secondary">Kopiraj datume</button></p>
+      <p>
+        <button id="copyDates" class="secondary">Kopiraj datume</button>
+        <button id="dlDates" class="secondary">Preuzmi .txt</button>
+      </p>
       <details class="card" style="margin-top:8px">
         <summary>OCR tekst (debug)</summary>
-        <pre id="ocrTxt" style="background:#111;color:#9fe;padding:10px;border-radius:8px;max-height:240px;overflow:auto"></pre>
+        <pre id="ocrTxt" style="background:#111;color:#9fe;padding:10px;border-radius:8px;max-height:260px;overflow:auto"></pre>
       </details>
     </div>
   </div>
@@ -67,13 +75,16 @@ const log = m => { logEl.textContent += (m + "\\n"); console.log(m); };
 const v = document.getElementById('v');
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
+const ov = document.getElementById('overlay');
+const octx = ov.getContext('2d');
 const codesUL = document.getElementById('codes');
 const datesBox = document.getElementById('dates');
 const ocrTxt = document.getElementById('ocrTxt');
-
 let currentStream = null;
 let codeReader = null;
 let lastDates = [];
+let lastCodeAt = 0;
+const codeSeen = new Set();
 
 // ---------- MMM parser (HR/EN/FR/IT + numerički) ----------
 function normalize(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(); }
@@ -96,28 +107,24 @@ A(['NOV','NOVEMBRE'],11);A(['DIC','DICEMBRE'],12);
 
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const MONTH_TOKEN = Array.from(ALIAS.keys()).sort((a,b)=>b.length-a.length).map(esc).join('|');
-const SEP = String.raw`[\s.,/\-]+`;
-const P1 = new RegExp(String.raw`\b(?<d>\d{1,2})${SEP}(?<m>${MONTH_TOKEN})${SEP}(?<y>\d{2,4})\b`,'g');
-const P2 = new RegExp(String.raw`\b(?<m>${MONTH_TOKEN})${SEP}(?<d>\d{1,2})(?!\d)${SEP}(?<y>\d{2,4})\b`,'g');
-const RX_DMY = /\b(?<d>0?[1-9]|[12]\d|3[01])[.\-\/ ](?<m>0?[1-9]|1[0-2])[.\-\/ ](?<y>\d{4}|\d{2})\b/g;
-const RX_YMD = /\b(?<y>\d{4})[.\-\/ ](?<m>0?[1-9]|1[0-2])[.\-\/ ](?<d>0?[1-9]|[12]\d|3[01])\b/g;
-const RX_MY  = /\b(?<m>0?[1-9]|1[0-2])[.\-\/ ](?<y>\d{4})\b/g;
-
+const SEP = String.raw`[\\s.,/\\-]+`;
+const P1 = new RegExp(String.raw`\\b(?<d>\\d{1,2})${SEP}(?<m>${MONTH_TOKEN})${SEP}(?<y>\\d{2,4})\\b`,'g');
+const P2 = new RegExp(String.raw`\\b(?<m>${MONTH_TOKEN})${SEP}(?<d>\\d{1,2})(?!\\d)${SEP}(?<y>\\d{2,4})\\b`,'g');
+const RX_DMY = /\\b(?<d>0?[1-9]|[12]\\d|3[01])[.\\-\\/ ](?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<y>\\d{4}|\\d{2})\\b/g;
+const RX_YMD = /\\b(?<y>\\d{4})[.\\-\\/ ](?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<d>0?[1-9]|[12]\\d|3[01])\\b/g;
+const RX_MY  = /\\b(?<m>0?[1-9]|1[0-2])[.\\-\\/ ](?<y>\\d{4})\\b/g;
 const toYear = y => { y=parseInt(y,10); return y<100?2000+y:y; };
 const validDate=(y,m,d)=>{const dt=new Date(y,m-1,d);return dt.getFullYear()==y&&dt.getMonth()==m-1&&dt.getDate()==d;};
 const lastDay=(y,m)=> new Date(y,m,0).getDate();
-
 function parseMMM(raw){
   const nd = normalize(raw), out=[];
-  for (const rx of [P1,P2]){
-    rx.lastIndex=0; let m;
+  for (const rx of [P1,P2]){ rx.lastIndex=0; let m;
     while((m=rx.exec(nd))){
       const d=parseInt(m.groups.d,10), mo=ALIAS.get(m.groups.m), y=toYear(m.groups.y);
       if(!mo||!validDate(y,mo,d)) continue;
       out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false});
     }
-  }
-  return out;
+  } return out;
 }
 function parseNumeric(raw){
   const out=[]; let m;
@@ -130,93 +137,177 @@ function dedupe(arr){const s=new Set(),o=[]; for(const x of arr){const k=`${x.ye
 function findAllDates(raw){ return dedupe([...parseMMM(raw), ...parseNumeric(raw)]); }
 function fmtLocal(d){ return new Date(d).toLocaleString('hr-HR', { timeZone:'Europe/Zagreb' }); }
 function showDates(arr){
-  const box = datesBox;
-  box.innerHTML='';
-  if(!arr.length){ box.textContent='Nema prepoznatih datuma.'; return; }
+  datesBox.innerHTML='';
+  if(!arr.length){ datesBox.textContent='Nema prepoznatih datuma.'; return; }
   const sorted=arr.slice().sort((a,b)=> new Date(a.iso)-new Date(b.iso));
   const best=sorted[0];
-  const ul = document.createElement('ul');
-  ul.style.paddingLeft='18px';
+  const ul = document.createElement('ul'); ul.style.paddingLeft='18px';
   for(const x of sorted){
     const li=document.createElement('li');
     li.innerHTML = `<span class="tag">${x.text}</span> → ${fmtLocal(x.iso)} ${x.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}`;
     ul.appendChild(li);
   }
-  box.innerHTML = `<p><b>Najbolji pogodak:</b> ${fmtLocal(best.iso)}</p>`;
-  box.appendChild(ul);
+  datesBox.innerHTML = `<p><b>Najbolji pogodak:</b> ${fmtLocal(best.iso)}</p>`;
+  datesBox.appendChild(ul);
 }
 
-// ---------- Kamera + ZXing ----------
+// ---------- kamera + ZXing ----------
 async function startCamera(){
   try{
     log('Kamera start…');
-    // stražnja kamera ako postoji
     const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false });
-    v.srcObject = stream; currentStream = stream;
-    await v.play();
-
-    const width = v.videoWidth||640, height = v.videoHeight||360;
-    cv.width = width; cv.height = height;
-
-    // ZXing reader
+    v.srcObject = stream; currentStream = stream; await v.play();
+    fitOverlay();
     if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
-    codeReader.decodeFromVideoDevice(null, v, (result, err, controls) => {
+    codeReader.decodeFromVideoDevice(null, v, (result, err) => {
       if (result) {
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="ok">✓</span> ${result.getText()} <span class="muted">(${result.getBarcodeFormat()})</span>`;
-        codesUL.prepend(li);
+        const txt = result.getText();
+        const fmt = result.getBarcodeFormat();
+        const now = Date.now();
+        if (!codeSeen.has(txt) || now - lastCodeAt > 2000) {
+          codeSeen.add(txt); lastCodeAt = now;
+          const li = document.createElement('li');
+          li.innerHTML = `<span class="ok">✓</span> ${txt} <span class="muted">(${fmt})</span>`;
+          codesUL.prepend(li);
+        }
       }
-      // err je normalan dok ne prepozna; ne spamamo log
     });
     log('ZXing skeniranje uključeno.');
-  }catch(e){ log('Kamera greška: '+(e.message||e)); alert('Kamera greška: '+(e.message||e)); }
+  }catch(e){ alert('Kamera greška: ' + (e.message||e)); log('Kamera greška: '+(e.message||e)); }
 }
 function stopCamera(){
   try{
     if (codeReader) { try{ codeReader.reset(); }catch{} }
     if (currentStream) currentStream.getTracks().forEach(t=>t.stop());
-    currentStream = null; v.srcObject = null;
-    log('Kamera stop.');
+    currentStream = null; v.srcObject = null; log('Kamera stop.');
   }catch(e){}
 }
+function fitOverlay(){
+  const w=v.videoWidth||640, h=v.videoHeight||360;
+  ov.width = w; ov.height = h;
+  ov.style.width = v.clientWidth+'px';
+  ov.style.height = v.clientHeight+'px';
+  ov.style.position='absolute';
+  ov.style.left = v.offsetLeft+'px';
+  ov.style.top  = v.offsetTop +'px';
+  drawROI();
+}
 
-// ---------- OCR frame ----------
-async function ocrFrame(){
-  try{
-    if (!v.srcObject) return log('Nema videa.');
-    // nacrtaj trenutni frame u canvas
-    const w=v.videoWidth||cv.width, h=v.videoHeight||cv.height;
-    cv.width=w; cv.height=h;
-    ctx.drawImage(v,0,0,w,h);
+// ---------- ROI crtanje ----------
+let roi = {x:0,y:0,w:0,h:0};
+let dragging=false, sx=0, sy=0;
+function drawROI(){
+  octx.clearRect(0,0,ov.width,ov.height);
+  if (roi.w>4 && roi.h>4){
+    octx.setLineDash([8,6]);
+    octx.lineWidth = 3; octx.strokeStyle = '#22c55e';
+    octx.strokeRect(roi.x, roi.y, roi.w, roi.h);
+  } else {
+    // guidance: sredina
+    octx.setLineDash([6,6]);
+    octx.lineWidth = 2; octx.strokeStyle = '#93c5fd';
+    const gw = Math.round(ov.width*0.6), gh = Math.round(ov.height*0.22);
+    const gx = Math.round((ov.width-gw)/2), gy = Math.round((ov.height-gh)/2);
+    octx.strokeRect(gx, gy, gw, gh);
+  }
+}
+function pos(ev){
+  const r = ov.getBoundingClientRect();
+  const x = (ev.touches?ev.touches[0].clientX:ev.clientX) - r.left;
+  const y = (ev.touches?ev.touches[0].clientY:ev.clientY) - r.top;
+  // skala prema internim pikselima canvasa
+  const sx = x * (ov.width / ov.clientWidth);
+  const sy = y * (ov.height/ ov.clientHeight);
+  return {x:sx,y:sy};
+}
+ov.addEventListener('mousedown', e=>{ dragging=true; const p=pos(e); sx=p.x; sy=p.y; roi={x:sx,y:sy,w:0,h:0}; drawROI(); });
+ov.addEventListener('mousemove', e=>{ if(!dragging) return; const p=pos(e); roi={x:Math.min(sx,p.x),y:Math.min(sy,p.y),w:Math.abs(p.x-sx),h:Math.abs(p.y-sy)}; drawROI(); });
+ov.addEventListener('mouseup',   ()=>{ dragging=false; drawROI(); });
+ov.addEventListener('mouseleave',()=>{ dragging=false; });
+ov.addEventListener('touchstart', e=>{ dragging=true; const p=pos(e); sx=p.x; sy=p.y; roi={x:sx,y:sy,w:0,h:0}; drawROI(); }, {passive:true});
+ov.addEventListener('touchmove',  e=>{ if(!dragging) return; const p=pos(e); roi={x:Math.min(sx,p.x),y:Math.min(sy,p.y),w:Math.abs(p.x-sx),h:Math.abs(p.y-sy)}; drawROI(); }, {passive:true});
+ov.addEventListener('touchend',   ()=>{ dragging=false; drawROI(); }, {passive:true});
+window.addEventListener('resize', ()=> fitOverlay());
+v.addEventListener('loadedmetadata', ()=> fitOverlay());
 
-    log('OCR u tijeku (eng+hrv+ita)…');
-    const worker = await Tesseract.createWorker('eng+hrv+ita');
-    const { data } = await worker.recognize(cv);
-    await worker.terminate();
-    const text = data.text || '';
-    ocrTxt.textContent = text;
-    const dates = findAllDates(text);
-    lastDates = dates;
-    showDates(dates);
-    log('OCR gotovo. Duljina teksta: '+text.length+', datuma: '+dates.length);
-  }catch(e){ log('OCR greška: '+(e.message||e)); }
+// ---------- preprocessing ----------
+function preprocess(inCanvas){
+  if (!document.getElementById('pp').checked) return inCanvas;
+  const w=inCanvas.width, h=inCanvas.height;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d'); g.drawImage(inCanvas,0,0,w,h);
+  const img=g.getImageData(0,0,w,h); const d=img.data;
+  // grayscale + auto-threshold (na temelju prosjeka)
+  let sum=0;
+  for(let i=0;i<d.length;i+=4){
+    const y = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    sum+=y; d[i]=d[i+1]=d[i+2]=y;
+  }
+  const mean = sum/(d.length/4);
+  const T = Math.max(90, Math.min(200, mean*0.95)); // blagi auto prag
+  for(let i=0;i<d.length;i+=4){
+    const y = d[i];
+    const b = y>T ? 255 : 0;
+    d[i]=d[i+1]=d[i+2]=b;
+  }
+  g.putImageData(img,0,0);
+  return c;
+}
+
+// ---------- OCR pomoćne ----------
+async function runOCR(sourceCanvas){
+  log('OCR (eng+hrv+ita)…');
+  const worker = await Tesseract.createWorker('eng+hrv+ita');
+  const { data } = await worker.recognize(sourceCanvas);
+  await worker.terminate();
+  const text = data.text || '';
+  ocrTxt.textContent = text;
+  const dates = findAllDates(text);
+  lastDates = dates; showDates(dates);
+  log('OCR gotovo. Duljina teksta: '+text.length+', datuma: '+dates.length);
+}
+function snapshotCanvas(){
+  const w=v.videoWidth||cv.width, h=v.videoHeight||cv.height;
+  cv.width=w; cv.height=h;
+  ctx.drawImage(v,0,0,w,h);
+  return cv;
+}
+function cropROI(fromCanvas){
+  if (!(roi.w>4 && roi.h>4)) return fromCanvas;
+  const c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(roi.w)); c.height=Math.max(1,Math.round(roi.h));
+  const g=c.getContext('2d');
+  g.drawImage(fromCanvas, roi.x, roi.y, roi.w, roi.h, 0, 0, c.width, c.height);
+  return c;
 }
 
 // ---------- UI ----------
 document.getElementById('btnStart').onclick = startCamera;
 document.getElementById('btnStop').onclick  = stopCamera;
-document.getElementById('btnOCR').onclick   = ocrFrame;
-
+document.getElementById('btnOCR').onclick   = async ()=>{
+  const frame = snapshotCanvas();
+  await runOCR(preprocess(frame));
+};
+document.getElementById('btnOCRroi').onclick = async ()=>{
+  const frame = snapshotCanvas();
+  const roiC = cropROI(frame);
+  await runOCR(preprocess(roiC));
+};
 document.getElementById('copyDates').onclick = async ()=>{
-  if (!lastDates.length) { log('Nema datuma.'); return; }
-  const lines = lastDates.slice().sort((a,b)=>new Date(a.iso)-new Date(b.iso))
-    .map(x=>`${x.text} → ${fmtLocal(x.iso)}${x.approx?' (≈ kraj mjeseca)':''}`).join('\n');
+  if (!lastDates.length){ log('Nema datuma.'); return; }
+  const lines=lastDates.slice().sort((a,b)=>new Date(a.iso)-new Date(b.iso))
+    .map(x=>`${x.text} → ${fmtLocal(x.iso)}${x.approx?' (≈ kraj mjeseca)':''}`).join('\\n');
   try{ await navigator.clipboard.writeText(lines); log('Datumi kopirani.'); }catch{ log('Clipboard blokiran.'); }
 };
-
+document.getElementById('dlDates').onclick = ()=>{
+  if (!lastDates.length){ log('Nema datuma.'); return; }
+  const lines=lastDates.slice().sort((a,b)=>new Date(a.iso)-new Date(b.iso))
+    .map(x=>`${x.text} → ${fmtLocal(x.iso)}${x.approx?' (≈ kraj mjeseca)':''}`).join('\\n');
+  const blob = new Blob([lines], {type:'text/plain;charset=utf-8'});
+  const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='ocr_dates.txt'; a.click(); URL.revokeObjectURL(a.href);
+};
 // JS error hook
 window.addEventListener('error', e=>{ const msg=e?.message||e; const line=e?.lineno?(' @'+e.filename+':'+e.lineno):''; log('JS error: '+msg+line); });
 </script>
 </body>
 </html>
-<!-- bump 2025-09-07T13:31:53 -->
