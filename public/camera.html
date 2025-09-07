@@ -1,0 +1,18 @@
+﻿<!doctype html>
+<meta charset="utf-8">
+<title>camera.html</title>
+<body style="font:16px system-ui;padding:20px">
+  <h2>📷 Camera test</h2>
+  <button id="start">Start camera</button>
+  <video id="v" playsinline autoplay style="width:100%;max-width:480px;border:1px solid #ccc;border-radius:8px"></video>
+  <script>
+    document.getElementById('start').onclick = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        document.getElementById('v').srcObject = stream;
+      } catch (e) {
+        alert('Camera error: ' + (e.message||e));
+      }
+    };
+  </script>
+</body>
