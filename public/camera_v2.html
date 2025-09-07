@@ -10,7 +10,7 @@
   .col{flex:1 1 520px}
   .card{border:1px solid #e5e7eb;border-radius:12px;padding:12px}
   video,canvas{max-width:100%;border-radius:12px;border:1px solid #e5e7eb;background:#000}
-  #overlay{position:absolute;left:0;top:0;pointer-events:auto;background:transparent !important;border:0 !important}
+  #overlay{position:absolute;left:0;top:0;pointer-events:auto;background:transparent !important;border:0 !important;z-index:3}
   .ok{color:#16a34a;font-weight:600}
   .bad{color:#dc2626}
   .tag{display:inline-block;padding:2px 8px;border-radius:9999px;background:#2563eb;color:#fff;font-weight:600}
@@ -28,10 +28,10 @@
 <div class="row">
   <div class="col">
     <div class="card" style="position:relative">
-      <video id="v" playsinline muted></video>
+      <video id="v" autoplay playsinline muted style="width:100%;height:auto;max-height:70vh;background:#111"></video></video>
       <canvas id="overlay"></canvas>
       <p style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-        <button id="btnStart">Start kamera</button> <button id="btnStartZX" class="secondary">Start (ZXing)</button> <select id="camSel" style="min-width:200px"></select>
+        <button id="btnStart">Start kamera</button> <button id="btnStartZX" class="secondary">Start (ZXing)</button> <button id="btnStartRaw" class="secondary">Start (Raw)</button> <button id="btnStop">Stop</button> <select id="camSel" style="min-width:200px"></select> <button id="btnStartZX" class="secondary">Start (ZXing)</button> <select id="camSel" style="min-width:200px"></select>
         <button id="btnStop" class="secondary">Stop</button>
         <button id="btnOCR" class="secondary">OCR frame</button>
         <button id="btnOCRroi" class="secondary">OCR ROI (pravokutnik)</button>
@@ -76,7 +76,7 @@ const v = document.getElementById('v');
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 const ov = document.getElementById('overlay');
-const octx = ov.getContext('2d'); ov.style.background='transparent'; ov.style.border='0'; ov.style.background='transparent'; ov.style.border='0';
+const octx = ov.getContext('2d'); ov.style.background='transparent'; ov.style.border='0'; ov.style.background='transparent'; ov.style.border='0'; ov.style.background='transparent'; ov.style.border='0';
 const codesUL = document.getElementById('codes');
 const datesBox = document.getElementById('dates');
 const ocrTxt = document.getElementById('ocrTxt');
@@ -361,7 +361,86 @@ window.addEventListener('error', e=>{ const msg=e?.message||e; const line=e?.lin
   if (btnStop) btnStop.onclick = stopAll;
 })();
 </script>
+<script>
+(function(){
+  let currentStream=null;
+  function vInfo(){ return "video "+(v.videoWidth||0)+"x"+(v.videoHeight||0)+" rs="+v.readyState; }
+  function log(m){ const L=document.getElementById("log"); if(L){ L.textContent+=(m+"\\n"); } console.log(m); }
+
+  async function populateCamSelect(){
+    try{
+      const sel=document.getElementById("camSel"); if(!sel) return;
+      const devs=await navigator.mediaDevices.enumerateDevices();
+      const cams=devs.filter(d=>d.kind==="videoinput"); sel.innerHTML="";
+      cams.forEach((c,i)=>{ const o=document.createElement("option"); o.value=c.deviceId; o.textContent=c.label||("Kamera "+(i+1)); sel.appendChild(o);});
+      log("cams="+cams.length);
+    }catch(e){ log("enumerateDevices: "+(e.message||e)); }
+  }
+
+  async function startRaw(){
+    try{
+      await navigator.mediaDevices.getUserMedia({video:true}).catch(()=>{});
+      await populateCamSelect();
+      const sel=document.getElementById("camSel");
+      const deviceId=(sel && sel.value)? {exact:sel.value} : undefined;
+
+      const cons = deviceId ? {video:{deviceId},audio:false} : {video:{facingMode:{ideal:'environment'}},audio:false};
+      log("startRaw CONS "+JSON.stringify(cons));
+      const s = await navigator.mediaDevices.getUserMedia(cons);
+      if (currentStream) try{ currentStream.getTracks().forEach(t=>t.stop()); }catch(e){}
+      currentStream = s; v.srcObject=s; v.muted=true; v.setAttribute('playsinline','');
+      await v.play();
+      v.onplaying = ()=>{ log("RAW playing "+vInfo()); fitOverlay&&fitOverlay(); };
+      v.onloadedmetadata = ()=>{ log("RAW meta "+vInfo()); fitOverlay&&fitOverlay(); };
+    }catch(e){ alert("Raw kamera greška: "+(e.message||e)); log("Raw fail: "+(e.name||"")+" "+(e.message||e)); }
+  }
+
+  async function startZX(){
+    try{
+      if (!window.codeReader) window.codeReader = new ZXing.BrowserMultiFormatReader();
+      await populateCamSelect();
+      const sel=document.getElementById("camSel");
+      const deviceId=(sel && sel.value)? sel.value : undefined;
+      log("ZXing start dev="+(deviceId||"default"));
+      codeReader.decodeFromVideoDevice(deviceId, v, (result, err)=>{
+        if (result){
+          const txt=result.getText(); const fmt=result.getBarcodeFormat(); const now=Date.now();
+          if (!window.codeSeen) window.codeSeen = new Set();
+          if (!window.lastCodeAt) window.lastCodeAt = 0;
+          if (!codeSeen.has(txt) || now-lastCodeAt>2000){
+            codeSeen.add(txt); lastCodeAt=now;
+            const li=document.createElement("li");
+            li.innerHTML="<span class=\\"ok\\">✓</span> "+txt+" <span class=\\"muted\\">("+fmt+")</span>";
+            const ul=window.codesUL || document.querySelector("#codes ul") || document.createElement("ul");
+            if (!window.codesUL){ (document.getElementById("codes")||document.body).appendChild(ul); window.codesUL=ul; }
+            ul.prepend(li);
+            window.lastCodeTxt = txt; window.lastCodeFmt = fmt;
+          }
+        }
+        if (err && !(err instanceof ZXing.NotFoundException)){ log("ZX err: "+err); }
+      });
+      v.onplaying = ()=>{ log("ZX VIDEO playing "+vInfo()); fitOverlay&&fitOverlay(); };
+      v.onloadedmetadata = ()=>{ log("ZX meta "+vInfo()); fitOverlay&&fitOverlay(); };
+    }catch(e){ alert("ZXing kamera greška: "+(e.message||e)); log("ZXing fail: "+(e.name||"")+" "+(e.message||e)); }
+  }
+
+  function stopAll(){
+    try{ if (window.codeReader) codeReader.reset(); }catch(e){}
+    try{ if (v.srcObject) v.srcObject.getTracks().forEach(t=>t.stop()); }catch(e){}
+    currentStream=null; v.srcObject=null; log("STOP");
+  }
+
+  // zakači gumbe (ako postoje na stranici)
+  const bRaw=document.getElementById("btnStartRaw"); if (bRaw) bRaw.onclick=startRaw;
+  const bZX =document.getElementById("btnStartZX");  if (bZX)  bZX.onclick =startZX;
+  const bStop=document.getElementById("btnStop");    if (bStop) bStop.onclick=stopAll;
+
+  // inicijalno popuniti select kad je moguće
+  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) { populateCamSelect(); }
+})();
+</script>
 </body>
 </html>
+
 
 
