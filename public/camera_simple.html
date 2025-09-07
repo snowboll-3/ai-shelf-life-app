@@ -1,0 +1,130 @@
+﻿<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Camera Simple</title>
+<style>
+  body{font:15px system-ui;margin:0;padding:16px;max-width:900px}
+  video{width:100%;height:auto;max-height:70vh;background:#000;border:1px solid #ddd;border-radius:12px}
+  #log{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;background:#0b1020;color:#e6edf3;padding:10px;border-radius:8px;min-height:120px}
+  button,select{padding:8px 12px;border:0;border-radius:10px;background:#2563eb;color:#fff;cursor:pointer;margin-right:8px}
+  select{background:#111;color:#fff}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .secondary{background:#374151}
+</style>
+
+<h2>📷 Camera (Simple)</h2>
+<div class="row">
+  <button id="btnRaw">Start (Raw)</button>
+  <button id="btnZX" class="secondary">Start (ZXing)</button>
+  <button id="btnStop" class="secondary">Stop</button>
+  <select id="camSel" style="min-width:220px"></select>
+</div>
+
+<video id="v" autoplay playsinline muted></video>
+
+<h3>Log</h3>
+<pre id="log"></pre>
+
+<script>
+(function(){
+  var v = document.getElementById("v");
+  var currentStream = null;
+  var codeReader = null;
+
+  function log(m){
+    var L = document.getElementById("log");
+    if (L) L.textContent += m + "\n";
+    console.log(m);
+  }
+
+  async function listCams(){
+    try{
+      var devs = await navigator.mediaDevices.enumerateDevices();
+      var cams = devs.filter(function(d){ return d.kind === "videoinput"; });
+      var sel = document.getElementById("camSel");
+      sel.innerHTML = "";
+      cams.forEach(function(c,i){
+        var o = document.createElement("option");
+        o.value = c.deviceId;
+        o.textContent = c.label || ("Kamera " + (i+1));
+        sel.appendChild(o);
+      });
+      log("Nađeno kamera: " + cams.length);
+    }catch(e){
+      log("enumerateDevices greška: " + (e.message || e));
+    }
+  }
+
+  function stopAll(){
+    try{ if (codeReader && codeReader.reset) codeReader.reset(); }catch(e){}
+    try{ if (currentStream) currentStream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
+    currentStream = null;
+    v.srcObject = null;
+    log("STOP");
+  }
+
+  function onVideoInfo(tag){
+    log(tag + " video " + (v.videoWidth||0) + "x" + (v.videoHeight||0));
+  }
+
+  async function startRaw(){
+    try{
+      // pribavi dozvolu i popis
+      try{ await navigator.mediaDevices.getUserMedia({video:true}); }catch(_){}
+      await listCams();
+
+      var sel = document.getElementById("camSel");
+      var deviceId = (sel && sel.value) ? { exact: sel.value } : undefined;
+      var cons = deviceId ? { video: { deviceId: deviceId }, audio:false } :
+                            { video: { facingMode: { ideal: "environment" } }, audio:false };
+
+      log("startRaw cons = " + JSON.stringify(cons));
+      var s = await navigator.mediaDevices.getUserMedia(cons);
+      stopAll();
+      currentStream = s;
+      v.srcObject = s;
+      v.muted = true;
+      v.setAttribute("playsinline", "");
+      v.onplaying = function(){ onVideoInfo("playing"); };
+      v.onloadedmetadata = function(){ onVideoInfo("metadata"); };
+      await v.play();
+    }catch(e){
+      alert("Raw kamera greška: " + (e.message||e));
+      log("Raw fail: " + (e.name||"") + " " + (e.message||e));
+    }
+  }
+
+  async function startZX(){
+    try{
+      if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
+      await listCams();
+      var sel = document.getElementById("camSel");
+      var deviceId = (sel && sel.value) ? sel.value : undefined;
+
+      log("ZXing start dev=" + (deviceId || "default"));
+      codeReader.decodeFromVideoDevice(deviceId, v, function(result, err){
+        if (result){
+          var txt = result.getText();
+          var fmt = result.getBarcodeFormat();
+          log("BARCODE: " + txt + " (" + fmt + ")");
+        }
+      });
+
+      v.onplaying = function(){ onVideoInfo("ZX playing"); };
+      v.onloadedmetadata = function(){ onVideoInfo("ZX metadata"); };
+    }catch(e){
+      alert("ZXing greška: " + (e.message||e));
+      log("ZXing fail: " + (e.name||"") + " " + (e.message||e));
+    }
+  }
+
+  document.getElementById("btnRaw").onclick = startRaw;
+  document.getElementById("btnZX").onclick  = startZX;
+  document.getElementById("btnStop").onclick = stopAll;
+
+  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) listCams();
+})();
+</script>
+
+<!-- ZXing lib -->
+<script src="https://unpkg.com/@zxing/library@0.20.0"></script>
