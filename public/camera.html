@@ -1,2 +1,221 @@
-﻿<!doctype html><meta charset="utf-8"><title>camera</title>
-<body style="font:16px system-ui;padding:20px">camera.html OK ✅</body>
+﻿<!doctype html>
+<html lang="hr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI Shelf-Life – Camera</title>
+<style>
+  body{font:15px system-ui;margin:0;padding:16px;max-width:980px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .col{flex:1 1 420px}
+  .card{border:1px solid #e5e7eb;border-radius:12px;padding:12px}
+  video,canvas{max-width:100%;border-radius:12px;border:1px solid #e5e7eb}
+  .ok{color:#16a34a;font-weight:600}
+  .bad{color:#dc2626}
+  .tag{display:inline-block;padding:2px 8px;border-radius:9999px;background:#2563eb;color:#fff;font-weight:600}
+  #log{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;background:#0b1020;color:#e6edf3;padding:10px;border-radius:8px;min-height:120px}
+  button{padding:8px 12px;border:0;border-radius:10px;background:#2563eb;color:#fff;cursor:pointer}
+  button.secondary{background:#6b7280}
+  .muted{opacity:.7}
+</style>
+</head>
+<body>
+<h2>📷 Camera skener (bar-kod + datum OCR)</h2>
+<p class="card">Klikni <b>Start kamera</b> → usmjeri na bar-kod ili datum na ambalaži. <br/>Ako bar-kod ne uhvati, klikni <b>OCR frame</b> za čitanje teksta i detekciju datuma.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="card">
+      <video id="v" playsinline muted></video>
+      <p>
+        <button id="btnStart">Start kamera</button>
+        <button id="btnStop" class="secondary">Stop</button>
+        <button id="btnOCR" class="secondary">OCR frame (datum)</button>
+      </p>
+      <canvas id="cv" width="10" height="10" style="display:none"></canvas>
+    </div>
+    <div class="card">
+      <h3>Bar-kodovi</h3>
+      <ul id="codes" style="padding-left:18px;margin:0"></ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card">
+      <h3>Datumi (OCR)</h3>
+      <div id="dates">—</div>
+      <p><button id="copyDates" class="secondary">Kopiraj datume</button></p>
+      <details class="card" style="margin-top:8px">
+        <summary>OCR tekst (debug)</summary>
+        <pre id="ocrTxt" style="background:#111;color:#9fe;padding:10px;border-radius:8px;max-height:240px;overflow:auto"></pre>
+      </details>
+    </div>
+  </div>
+</div>
+
+<h3>Log</h3>
+<div id="log"></div>
+
+<!-- ZXing (bar-kod) -->
+<script src="https://unpkg.com/@zxing/library@0.20.0"></script>
+<!-- Tesseract (OCR) -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+
+<script>
+// ---------- helpers ----------
+const logEl = document.getElementById('log');
+const log = m => { logEl.textContent += (m + "\\n"); console.log(m); };
+const v = document.getElementById('v');
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const codesUL = document.getElementById('codes');
+const datesBox = document.getElementById('dates');
+const ocrTxt = document.getElementById('ocrTxt');
+
+let currentStream = null;
+let codeReader = null;
+let lastDates = [];
+
+// ---------- MMM parser (HR/EN/FR/IT + numerički) ----------
+function normalize(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(); }
+const ALIAS = new Map(); const A=(arr,n)=>arr.forEach(x=>ALIAS.set(normalize(x),n));
+// HR
+A(['SIJ','SIJECANJ'],1);A(['VEL','VELJACA','VELJ'],2);A(['OZU','OZUJAK','OZUJ'],3);A(['TRA','TRAVANJ'],4);
+A(['SVI','SVIBANJ'],5);A(['LIP','LIPANJ'],6);A(['SRP','SRPANJ'],7);A(['KOL','KOLOVOZ'],8);A(['RUJ','RUJAN'],9);
+A(['LIS','LISTOPAD'],10);A(['STU','STUDENI'],11);A(['PRO','PROSINAC'],12);
+// EN
+A(['JAN','JANUARY'],1);A(['FEB','FEBRUARY'],2);A(['MAR','MARCH'],3);A(['APR','APRIL'],4);A(['MAY'],5);
+A(['JUN','JUNE'],6);A(['JUL','JULY'],7);A(['AUG','AUGUST'],8);A(['SEP','SEPT','SEPTEMBER'],9);A(['OCT','OCTOBER'],10);
+A(['NOV','NOVEMBER'],11);A(['DEC','DECEMBER'],12);
+// FR
+A(['JANV','JAN'],1);A(['FEVR','FEV','FEVR'],2);A(['MARS','MAR'],3);A(['AVR'],4);A(['MAI'],5);
+A(['JUIN'],6);A(['JUIL'],7);A(['AOUT','AOUT'],8);A(['SEPT'],9);A(['OCT'],10);A(['NOV'],11);A(['DEC','DEC'],12);
+// IT
+A(['GEN','GENNAIO'],1);A(['FEB','FEBBRAIO'],2);A(['MAR','MARZO'],3);A(['APR','APRILE'],4);A(['MAG','MAGGIO'],5);
+A(['GIU','GIUGNO'],6);A(['LUG','LUGLIO'],7);A(['AGO','AGOSTO'],8);A(['SET','SETTEMBRE'],9);A(['OTT','OTTOBRE'],10);
+A(['NOV','NOVEMBRE'],11);A(['DIC','DICEMBRE'],12);
+
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+const MONTH_TOKEN = Array.from(ALIAS.keys()).sort((a,b)=>b.length-a.length).map(esc).join('|');
+const SEP = String.raw`[\s.,/\-]+`;
+const P1 = new RegExp(String.raw`\b(?<d>\d{1,2})${SEP}(?<m>${MONTH_TOKEN})${SEP}(?<y>\d{2,4})\b`,'g');
+const P2 = new RegExp(String.raw`\b(?<m>${MONTH_TOKEN})${SEP}(?<d>\d{1,2})(?!\d)${SEP}(?<y>\d{2,4})\b`,'g');
+const RX_DMY = /\b(?<d>0?[1-9]|[12]\d|3[01])[.\-\/ ](?<m>0?[1-9]|1[0-2])[.\-\/ ](?<y>\d{4}|\d{2})\b/g;
+const RX_YMD = /\b(?<y>\d{4})[.\-\/ ](?<m>0?[1-9]|1[0-2])[.\-\/ ](?<d>0?[1-9]|[12]\d|3[01])\b/g;
+const RX_MY  = /\b(?<m>0?[1-9]|1[0-2])[.\-\/ ](?<y>\d{4})\b/g;
+
+const toYear = y => { y=parseInt(y,10); return y<100?2000+y:y; };
+const validDate=(y,m,d)=>{const dt=new Date(y,m-1,d);return dt.getFullYear()==y&&dt.getMonth()==m-1&&dt.getDate()==d;};
+const lastDay=(y,m)=> new Date(y,m,0).getDate();
+
+function parseMMM(raw){
+  const nd = normalize(raw), out=[];
+  for (const rx of [P1,P2]){
+    rx.lastIndex=0; let m;
+    while((m=rx.exec(nd))){
+      const d=parseInt(m.groups.d,10), mo=ALIAS.get(m.groups.m), y=toYear(m.groups.y);
+      if(!mo||!validDate(y,mo,d)) continue;
+      out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false});
+    }
+  }
+  return out;
+}
+function parseNumeric(raw){
+  const out=[]; let m;
+  RX_DMY.lastIndex=0; while((m=RX_DMY.exec(raw))){const d=parseInt(m.groups.d,10),mo=parseInt(m.groups.m,10),y=toYear(m.groups.y); if(!validDate(y,mo,d)) continue; out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false});}
+  RX_YMD.lastIndex=0; while((m=RX_YMD.exec(raw))){const d=parseInt(m.groups.d,10),mo=parseInt(m.groups.m,10),y=parseInt(m.groups.y,10); if(!validDate(y,mo,d)) continue; out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:false});}
+  RX_MY.lastIndex=0;  while((m=RX_MY.exec(raw))){const mo=parseInt(m.groups.m,10),y=parseInt(m.groups.y,10); const d=lastDay(y,mo); out.push({text:m[0],day:d,month:mo,year:y,iso:new Date(y,mo-1,d).toISOString(),approx:true});}
+  return out;
+}
+function dedupe(arr){const s=new Set(),o=[]; for(const x of arr){const k=`${x.year}-${x.month}-${x.day}-${x.approx}`; if(s.has(k)) continue; s.add(k); o.push(x);} return o;}
+function findAllDates(raw){ return dedupe([...parseMMM(raw), ...parseNumeric(raw)]); }
+function fmtLocal(d){ return new Date(d).toLocaleString('hr-HR', { timeZone:'Europe/Zagreb' }); }
+function showDates(arr){
+  const box = datesBox;
+  box.innerHTML='';
+  if(!arr.length){ box.textContent='Nema prepoznatih datuma.'; return; }
+  const sorted=arr.slice().sort((a,b)=> new Date(a.iso)-new Date(b.iso));
+  const best=sorted[0];
+  const ul = document.createElement('ul');
+  ul.style.paddingLeft='18px';
+  for(const x of sorted){
+    const li=document.createElement('li');
+    li.innerHTML = `<span class="tag">${x.text}</span> → ${fmtLocal(x.iso)} ${x.approx?'<span class="muted">(≈ kraj mjeseca)</span>':''}`;
+    ul.appendChild(li);
+  }
+  box.innerHTML = `<p><b>Najbolji pogodak:</b> ${fmtLocal(best.iso)}</p>`;
+  box.appendChild(ul);
+}
+
+// ---------- Kamera + ZXing ----------
+async function startCamera(){
+  try{
+    log('Kamera start…');
+    // stražnja kamera ako postoji
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false });
+    v.srcObject = stream; currentStream = stream;
+    await v.play();
+
+    const width = v.videoWidth||640, height = v.videoHeight||360;
+    cv.width = width; cv.height = height;
+
+    // ZXing reader
+    if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
+    codeReader.decodeFromVideoDevice(null, v, (result, err, controls) => {
+      if (result) {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="ok">✓</span> ${result.getText()} <span class="muted">(${result.getBarcodeFormat()})</span>`;
+        codesUL.prepend(li);
+      }
+      // err je normalan dok ne prepozna; ne spamamo log
+    });
+    log('ZXing skeniranje uključeno.');
+  }catch(e){ log('Kamera greška: '+(e.message||e)); alert('Kamera greška: '+(e.message||e)); }
+}
+function stopCamera(){
+  try{
+    if (codeReader) { try{ codeReader.reset(); }catch{} }
+    if (currentStream) currentStream.getTracks().forEach(t=>t.stop());
+    currentStream = null; v.srcObject = null;
+    log('Kamera stop.');
+  }catch(e){}
+}
+
+// ---------- OCR frame ----------
+async function ocrFrame(){
+  try{
+    if (!v.srcObject) return log('Nema videa.');
+    // nacrtaj trenutni frame u canvas
+    const w=v.videoWidth||cv.width, h=v.videoHeight||cv.height;
+    cv.width=w; cv.height=h;
+    ctx.drawImage(v,0,0,w,h);
+
+    log('OCR u tijeku (eng+hrv+ita)…');
+    const worker = await Tesseract.createWorker('eng+hrv+ita');
+    const { data } = await worker.recognize(cv);
+    await worker.terminate();
+    const text = data.text || '';
+    ocrTxt.textContent = text;
+    const dates = findAllDates(text);
+    lastDates = dates;
+    showDates(dates);
+    log('OCR gotovo. Duljina teksta: '+text.length+', datuma: '+dates.length);
+  }catch(e){ log('OCR greška: '+(e.message||e)); }
+}
+
+// ---------- UI ----------
+document.getElementById('btnStart').onclick = startCamera;
+document.getElementById('btnStop').onclick  = stopCamera;
+document.getElementById('btnOCR').onclick   = ocrFrame;
+
+document.getElementById('copyDates').onclick = async ()=>{
+  if (!lastDates.length) { log('Nema datuma.'); return; }
+  const lines = lastDates.slice().sort((a,b)=>new Date(a.iso)-new Date(b.iso))
+    .map(x=>`${x.text} → ${fmtLocal(x.iso)}${x.approx?' (≈ kraj mjeseca)':''}`).join('\n');
+  try{ await navigator.clipboard.writeText(lines); log('Datumi kopirani.'); }catch{ log('Clipboard blokiran.'); }
+};
+
+// JS error hook
+window.addEventListener('error', e=>{ const msg=e?.message||e; const line=e?.lineno?(' @'+e.filename+':'+e.lineno):''; log('JS error: '+msg+line); });
+</script>
+</body>
+</html>
