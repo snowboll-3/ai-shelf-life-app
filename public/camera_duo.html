@@ -205,3 +205,72 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 
 
+
+<div class="card" style="margin-top:16px">
+  <h3>Pregled (sesija)</h3>
+  <table style="width:100%;border-collapse:collapse">
+    <thead><tr><th>Vrijeme</th><th>Kod</th><th>Naziv</th><th>Rok (YYYY-MM-DD)</th><th>Status</th></tr></thead>
+    <tbody id="sessBody"><tr><td colspan="5">—</td></tr></tbody>
+  </table>
+  <p><button id="btnCommit">Dodaj u nadzornu ploču</button></p>
+</div>
+<script>
+window.AUTO_COMMIT = false;                 // ručni commit
+window.SESSION_ITEMS = window.SESSION_ITEMS || [];
+window._SID = window._SID || 1;
+
+function fmtLocal(ts){ try{ return new Date(ts).toLocaleString('hr-HR',{timeZone:'Europe/Zagreb'}); }catch(e){ return ''; } }
+function renderSession(){
+  var body = document.getElementById('sessBody'); if(!body) return;
+  if(!SESSION_ITEMS.length){ body.innerHTML = '<tr><td colspan="5">—</td></tr>'; return; }
+  var html = '';
+  for (var i=0;i<SESSION_ITEMS.length;i++){
+    var r = SESSION_ITEMS[i];
+    var status = r.expiry_ymd ? '🟢 spremno' : '🟡 treba rok';
+    html += '<tr>'
+          + '<td>'+fmtLocal(r.ts)+'</td>'
+          + '<td>'+(r.code||'')+'</td>'
+          + '<td>'+((r.name||'').replace(/</g,'&lt;'))+'</td>'
+          + '<td>'+(r.expiry_ymd||'')+'</td>'
+          + '<td>'+status+'</td>'
+          + '</tr>';
+  }
+  body.innerHTML = html;
+}
+function addSessionBarcode(entry){
+  SESSION_ITEMS.push({ id:_SID++, ts:entry.ts, code:entry.code, name:(entry.name||''), expiry_ymd:'' });
+  renderSession();
+}
+function updateSessionName(code, name){
+  for (var i=SESSION_ITEMS.length-1;i>=0;i--){
+    if (SESSION_ITEMS[i].code===code && !SESSION_ITEMS[i].name){ SESSION_ITEMS[i].name = name||''; break; }
+  }
+  renderSession();
+}
+function updateSessionExpiry(code, ymd){
+  for (var i=SESSION_ITEMS.length-1;i>=0;i--){
+    if (SESSION_ITEMS[i].code===code && !SESSION_ITEMS[i].expiry_ymd){ SESSION_ITEMS[i].expiry_ymd = ymd||''; break; }
+  }
+  renderSession();
+}
+async function commitSession(){
+  if (!SESSION_ITEMS.length){ alert('Pregled je prazan.'); return; }
+  for (var i=0;i<SESSION_ITEMS.length;i++){
+    var it = SESSION_ITEMS[i];
+    try{
+      await fetch('/api/export_event', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'barcode', payload:{ ts: it.ts, code: it.code, name: it.name||'' } }) });
+      if (it.expiry_ymd){
+        await fetch('/api/export_event', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'date', payload:{ ts: Date.now(), code: it.code, ymd: it.expiry_ymd } }) });
+      }
+    }catch(e){}
+  }
+  SESSION_ITEMS = [];
+  renderSession();
+  if (typeof clickSound==='function') clickSound();
+  alert('Dodano u nadzornu ploču.');
+}
+document.addEventListener('DOMContentLoaded', function(){
+  var b=document.getElementById('btnCommit'); if (b) b.onclick = commitSession;
+});
+</script>
+
