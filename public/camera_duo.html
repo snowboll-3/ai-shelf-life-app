@@ -210,8 +210,8 @@ function fmtHR(ymd){ try{ if(!ymd) return ""; const a=ymd.split("-"); if(a.lengt
 <div class="card" style="margin-top:16px">
   <h3>Pregled (sesija)</h3>
   <table style="width:100%;border-collapse:collapse">
-    <thead><tr><th>Vrijeme</th><th>Kod</th><th>Naziv</th><th>Rok (DD.MM.YYYY.)</th><th>Status</th></tr></thead>
-    <tbody id="sessBody"><tr><td colspan="5">—</td></tr></tbody>
+    <thead><tr><th>Vrijeme</th><th>Kod</th><th>Naziv</th><th>Rok (DD.MM.YYYY.)</th></tr></thead>
+    <tbody id="sessBody"><tr><td colspan="4">—</td></tr></tbody>
   </table>
   <p><button id="btnCommit">Dodaj u nadzornu ploču</button></p>
 </div>
@@ -233,7 +233,7 @@ function renderSession(){
           + '<td>'+fmtLocal(r.ts)+'</td>'
           + '<td>'+(r.code||'')+'</td>'
           + '<td>'+((r.name||'').replace(/</g,'&lt;'))+'</td>'
-          + '<td>'+(r.expiry_ymd||'')+'</td>'
+          + '<td>'+ (fmtHR(r.expiry_ymd)||'') +'</td>'
           + '<td>'+status+'</td>'
           + '</tr>';
   }
@@ -276,4 +276,24 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 </script>
 
+
+
+
+<script>
+function renderSession(){
+  var body = document.getElementById('sessBody'); if(!body) return;
+  if(!SESSION_ITEMS.length){ body.innerHTML = '<tr><td colspan="4">—</td></tr>'; return; }
+  var html='';
+  for (var i=0;i<SESSION_ITEMS.length;i++){
+    var r=SESSION_ITEMS[i];
+    html += '<tr>'
+      + '<td>'+fmtLocal(r.ts)+'</td>'
+      + '<td>'+(r.code||'')+'</td>'
+      + '<td>'+((r.name||'').replace(/</g,'&lt;'))+'</td>'
+      + '<td>'+ (typeof fmtHR==='function' ? (fmtHR(r.expiry_ymd)||'') : (r.expiry_ymd||'')) +'</td>'
+      + '</tr>';
+  }
+  body.innerHTML = html;
+}
+</script>
 
