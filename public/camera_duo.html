@@ -26,10 +26,10 @@
   <tbody id="codesBody"><tr class="muted"><td colspan="3">—</td></tr></tbody>
 </table>
 
-<h3>Datumi</h3>
+<h3>Vrijeme skeniranja</h3>
 <table>
-  <thead><tr><th>Iz teksta</th><th>Vrijednost</th></tr></thead>
-  <tbody id="datesBody"><tr class="muted"><td colspan="2">—</td></tr></tbody>
+  <thead><tr><th>Vrijeme skeniranja</th></tr></thead>
+  <tbody id="datesBody"><tr class="muted"><td colspan="1">—</td></tr></tbody>
 </table>
 
 <script>
@@ -55,7 +55,12 @@
     codesBody.innerHTML = html;
   }
   function renderDates(){
-    if (!dates.length){ datesBody.innerHTML = '<tr class="muted"><td colspan="2">—</td></tr>'; return; }
+  if (!dates.length){ datesBody.innerHTML = '<tr class="muted"><td colspan="1">—</td></tr>'; return; }
+  function hhmmss(ts){ try{ return new Date(ts).toLocaleTimeString("hr-HR",{ timeZone:"Europe/Zagreb", hour12:false }); } catch(_){ return ""; } }
+  var sorted = dates.slice().sort(function(a,b){ return a.ts - b.ts; });
+  var html = sorted.map(function(d){ return '<tr><td>'+hhmmss(d.ts)+'</td></tr>'; }).join('');
+  datesBody.innerHTML = html;
+}
     var html = dates.map(function(d){
       return '<tr><td>'+d.text+'</td><td>'+fmtLocal(d.iso)+(d.approx?' (≈ kraj mjeseca)':'')+'</td></tr>';
     }).join('');
@@ -198,3 +203,5 @@
 <!-- Libs -->
 <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+
+
