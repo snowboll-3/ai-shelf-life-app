@@ -1,0 +1,3 @@
+﻿Local URL:  http://127.0.0.1:3035
+Render URL: https://ai-shelf-life-94l6.onrender.com
+SECRET (dev): mrcina_one_secret_abc   (NE COMMITTATI u git!)

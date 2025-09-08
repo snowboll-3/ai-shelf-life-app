@@ -54,7 +54,7 @@ document.addEventListener('touchstart', unlockAudio, {once:true});
 <h3>Vrijeme skeniranja</h3>
 <table>
   <thead><tr><th>Vrijeme skeniranja</th></tr></thead>
-  <tbody id="datesBody"><tr class="muted"><td colspan="1">—</td></tr></tbody>
+  <tbody id="datesBody"><tr class="muted"><td colspan="4">—</td></tr></tbody>
 </table>
 
 <script>
@@ -81,7 +81,23 @@ function fmtHR(ymd){ try{ if(!ymd) return ""; const a=ymd.split("-"); if(a.lengt
     codesBody.innerHTML = html;
   }
   function renderDates(){
-  if (!dates.length){ datesBody.innerHTML = '<tr class="muted"><td colspan="1">—</td></tr>'; return; }
+  var body = document.getElementById("datesBody"); if (!body) return;
+  var rows = (window.SESSION_ITEMS||[]).filter(function(r){ return !!r.expiry_ymd; });
+  if (!rows.length){ body.innerHTML = '<tr class="muted"><td colspan="4">—</td></tr>'; return; }
+  rows.sort(function(a,b){ return ((a.expiry_ts||a.ts) - (b.expiry_ts||b.ts)); });
+  body.innerHTML = rows.map(function(r){
+    var t = (r.expiry_ts||r.ts);
+    var code = (r.code||"");
+    var name = (r.name||"").replace(/</g,"&lt;");
+    var rok = (typeof fmtHR==="function" ? (fmtHR(r.expiry_ymd)||"") : (r.expiry_ymd||""));
+    return "<tr>"
+      + "<td>"+ fmtHHMMSS(t) +"</td>"
+      + "<td>"+ code +"</td>"
+      + "<td>"+ name +"</td>"
+      + "<td>"+ rok  +"</td>"
+      + "</tr>";
+  }).join("");
+}
   function hhmmss(ts){ try{ return new Date(ts).toLocaleTimeString("hr-HR",{ timeZone:"Europe/Zagreb", hour12:false }); } catch(_){ return ""; } }
   var sorted = dates.slice().sort(function(a,b){ return a.ts - b.ts; });
   var html = sorted.map(function(d){ return '<tr><td>'+hhmmss(d.ts)+'</td></tr>'; }).join('');
@@ -322,4 +338,10 @@ function renderSession(){
 }
 </script>
 
+
+
+<script>
+function fmtHHMMSS(ts){ try{ return new Date(ts).toLocaleTimeString("hr-HR",{ timeZone:"Europe/Zagreb", hour12:false }); }catch(_){ return ""; } }
+function fmtHR(ymd){ try{ if(!ymd) return ""; var a=ymd.split("-"); if(a.length<3) return ymd; return a[2]+"."+a[1]+"."+a[0]+"."; }catch(_){ return ymd||""; } }
+</script>
 
