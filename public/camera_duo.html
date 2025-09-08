@@ -1,4 +1,29 @@
-﻿<!doctype html>
+﻿<script>
+// --- Beep helpers (mobitel friendly) ---
+function makeBeep(freq=880, dur=120){
+  try{
+    const C = makeBeep.ctx || (makeBeep.ctx = new (window.AudioContext||window.webkitAudioContext)());
+    const o = C.createOscillator(), g = C.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    o.connect(g); g.connect(C.destination);
+    const t = C.currentTime;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(0.1, t+0.01);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur/1000);
+    o.stop(t + dur/1000 + 0.02);
+  }catch(_){}
+}
+function unlockAudio(){
+  try{
+    const C = makeBeep.ctx || (makeBeep.ctx = new (window.AudioContext||window.webkitAudioContext)());
+    if (C.state === 'suspended') C.resume();
+  }catch(_){}
+}
+document.addEventListener('click', unlockAudio, {once:true});
+document.addEventListener('touchstart', unlockAudio, {once:true});
+</script>
+<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Camera (barcode + dates)</title>
@@ -296,4 +321,5 @@ function renderSession(){
   body.innerHTML = html;
 }
 </script>
+
 
