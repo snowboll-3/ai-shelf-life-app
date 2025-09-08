@@ -5,7 +5,7 @@
     plan: free
     region: frankfurt
     buildCommand: "npm ci"
-    startCommand: "node server_safe.js"
+    startCommand: node server_safe.js
     envVars:
       - key: SECRET
         value: mrcina_one_secret_prod_CHANGE_ME
@@ -15,3 +15,4 @@
         value: production
     healthCheckPath: "/"
     autoDeploy: true
+
